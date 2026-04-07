@@ -1,42 +1,66 @@
-import { View, Text, StyleSheet, FlatList, ScrollView } from "react-native";
+import React, { useEffect, useState } from "react";
+import { FlatList, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { BOTTOM_BAR_HEIGHT } from "../components/BottomBar";
+import { getWalletSummary, getWalletTransactions } from "../services/customerApi";
+import { formatCurrency, formatRelativeDate } from "../utils/location";
 
-export default function Wallet() {
-  // UI-only mock data
-  const walletBalance = 1240;
+export default function Wallet({ walletSummary, onWalletUpdated }) {
+  const [summary, setSummary] = useState(walletSummary);
+  const [transactions, setTransactions] = useState(walletSummary?.recentTransactions || []);
 
-  const completedTrips = 7;
-  const cashbackTargetTrips = 10;
-  const remainingTrips = cashbackTargetTrips - completedTrips;
-  const progress = (completedTrips / cashbackTargetTrips) * 100;
+  useEffect(() => {
+    setSummary(walletSummary);
+    setTransactions(walletSummary?.recentTransactions || []);
+  }, [walletSummary]);
 
-  const transactions = [
-    { id: "1", title: "Trip Completed", amount: "- ₹100", date: "Today" },
-    { id: "2", title: "Trip Completed", amount: "- ₹30", date: "Yesterday" },
-    { id: "3", title: "Cashback Bonus", amount: "+ ₹20", date: "2 days ago" },
-    { id: "4", title: "Trip Completed", amount: "- ₹30", date: "3 days ago" },
-    { id: "5", title: "Trip Completed", amount: "- ₹100", date: "4 days ago" },
-  ];
+  useEffect(() => {
+    let ignore = false;
+
+    const loadWallet = async () => {
+      try {
+        const [summaryResponse, transactionsResponse] = await Promise.all([
+          getWalletSummary(),
+          getWalletTransactions(20),
+        ]);
+
+        if (!ignore) {
+          setSummary(summaryResponse);
+          setTransactions(transactionsResponse.items || []);
+          onWalletUpdated(summaryResponse);
+        }
+      } catch {
+        return null;
+      }
+      return null;
+    };
+
+    loadWallet();
+
+    return () => {
+      ignore = true;
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const completedTrips = summary?.cashbackProgress?.completedTrips || 0;
+  const cashbackTargetTrips = summary?.cashbackProgress?.targetTrips || 10;
+  const remainingTrips = summary?.cashbackProgress?.remainingTrips || 0;
+  const progress = cashbackTargetTrips
+    ? (completedTrips / cashbackTargetTrips) * 100
+    : 0;
 
   return (
     <View style={styles.container}>
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.scrollContent}
-      >
-        {/* HEADER */}
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
         <View style={styles.header}>
           <Text style={styles.title}>Wallet</Text>
         </View>
 
-        {/* WALLET BALANCE */}
         <View style={styles.balanceCard}>
           <Text style={styles.balanceLabel}>Current Balance</Text>
-          <Text style={styles.balanceValue}>₹{walletBalance}</Text>
+          <Text style={styles.balanceValue}>{formatCurrency(summary?.balance || 0)}</Text>
         </View>
 
-        {/* CASHBACK PROGRESS */}
         <View style={styles.card}>
           <Text style={styles.cardLabel}>Cashback Progress</Text>
 
@@ -53,7 +77,6 @@ export default function Wallet() {
           </View>
         </View>
 
-        {/* TRIP SUMMARY */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Trip Summary</Text>
 
@@ -72,35 +95,31 @@ export default function Wallet() {
           </View>
         </View>
 
-        {/* RECENT TRANSACTIONS */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Recent Transactions</Text>
 
           <FlatList
             data={transactions}
-            keyExtractor={(item) => item.id}
+            keyExtractor={(item) => item._id}
             scrollEnabled={false}
             ItemSeparatorComponent={() => <View style={styles.divider} />}
             renderItem={({ item }) => (
               <View style={styles.transactionRow}>
                 <View>
                   <Text style={styles.transactionTitle}>{item.title}</Text>
-                  <Text style={styles.transactionDate}>{item.date}</Text>
+                  <Text style={styles.transactionDate}>{formatRelativeDate(item.createdAt)}</Text>
                 </View>
 
-                <Text style={styles.transactionAmount}>{item.amount}</Text>
+                <Text style={styles.transactionAmount}>
+                  {item.direction === "credit" ? "+" : "-"} {formatCurrency(item.amount)}
+                </Text>
               </View>
             )}
           />
         </View>
 
-        {/* INFO */}
         <View style={styles.infoBox}>
-          <Ionicons
-            name="information-circle-outline"
-            size={18}
-            color="#A1A1A1"
-          />
+          <Ionicons name="information-circle-outline" size={18} color="#A1A1A1" />
           <Text style={styles.infoText}>
             Balance updates automatically after each completed trip.
           </Text>
@@ -116,96 +135,80 @@ const styles = StyleSheet.create({
     backgroundColor: "#000",
     paddingBottom: BOTTOM_BAR_HEIGHT,
   },
-
   scrollContent: {
     paddingHorizontal: 20,
     paddingBottom: 40,
   },
-
   header: {
     paddingTop: 60,
     paddingBottom: 24,
   },
-
   title: {
     color: "#fff",
     fontSize: 28,
     fontWeight: "700",
   },
-
   balanceCard: {
     backgroundColor: "#fff",
     borderRadius: 20,
     padding: 20,
     marginBottom: 24,
   },
-
   balanceLabel: {
     color: "#555",
     fontSize: 13,
     marginBottom: 6,
   },
-
   balanceValue: {
     color: "#000",
     fontSize: 32,
     fontWeight: "800",
   },
-
   card: {
     backgroundColor: "#111",
     borderRadius: 18,
     padding: 20,
     marginBottom: 28,
   },
-
   cardLabel: {
     color: "#A1A1A1",
     fontSize: 13,
     marginBottom: 8,
   },
-
   primaryText: {
     color: "#fff",
     fontSize: 22,
     fontWeight: "700",
     marginBottom: 6,
   },
-
   secondaryText: {
     color: "#A1A1A1",
     fontSize: 14,
     marginBottom: 16,
   },
-
   progressTrack: {
     height: 6,
     backgroundColor: "#222",
     borderRadius: 6,
     overflow: "hidden",
   },
-
   progressFill: {
     height: "100%",
     backgroundColor: "#fff",
   },
-
   section: {
     marginBottom: 28,
   },
-
   sectionTitle: {
     color: "#fff",
     fontSize: 18,
     fontWeight: "600",
     marginBottom: 16,
   },
-
   row: {
     flexDirection: "row",
     gap: 16,
   },
-
   statCard: {
     flex: 1,
     backgroundColor: "#111",
@@ -213,50 +216,42 @@ const styles = StyleSheet.create({
     padding: 16,
     alignItems: "center",
   },
-
   statValue: {
     color: "#fff",
     fontSize: 20,
     fontWeight: "700",
     marginTop: 8,
   },
-
   statLabel: {
     color: "#A1A1A1",
     fontSize: 12,
     marginTop: 4,
   },
-
   transactionRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     paddingVertical: 12,
   },
-
   transactionTitle: {
     color: "#fff",
     fontSize: 15,
     fontWeight: "500",
   },
-
   transactionDate: {
     color: "#777",
     fontSize: 12,
     marginTop: 2,
   },
-
   transactionAmount: {
     color: "#fff",
     fontSize: 15,
     fontWeight: "600",
   },
-
   divider: {
     height: 1,
     backgroundColor: "#222",
   },
-
   infoBox: {
     flexDirection: "row",
     alignItems: "center",
@@ -265,7 +260,6 @@ const styles = StyleSheet.create({
     padding: 14,
     borderRadius: 12,
   },
-
   infoText: {
     color: "#A1A1A1",
     fontSize: 13,

@@ -15,7 +15,7 @@ const {
   TERMINAL_RIDE_STATUSES,
   TRIP_EVENT,
 } = require("../config/constants");
-const { emitRideLifecycle } = require("./socket.service");
+const { emitRideLifecycle, emitToDriver } = require("./socket.service");
 
 function computeFareBreakdown({ distanceKm, rideType }) {
   const baseFare = rideType === RIDE_TYPE.SHARED ? 30 : 100;
@@ -134,6 +134,7 @@ async function createRide({ customerId, payload }) {
       },
     ],
     otpHash: await hashValue(rideOtp),
+    otpCode: rideOtp,
     city: payload.city || "Delhi",
   });
 
@@ -204,11 +205,26 @@ async function assignNearestDriver(ride) {
     },
   });
 
+  emitToDriver(selectedDriver._id, "ride:new_assignment", {
+    rideId: String(updatedRide._id),
+    pickup: updatedRide.pickup,
+    drop: updatedRide.drop,
+    fare: updatedRide.quotedFare,
+    distanceKm: updatedRide.distanceKm,
+    rideType: updatedRide.rideType,
+    passengerCount: updatedRide.passengerCount,
+    paymentMethod: updatedRide.paymentMethod,
+  });
+
   return updatedRide;
 }
 
 async function moveRideToArriving(rideId) {
   const ride = await Ride.findById(rideId).populate("driverId");
+  // Idempotent: already past the DRIVER_ARRIVING stage
+  if (ride && [RIDE_STATUS.DRIVER_ARRIVING, RIDE_STATUS.VERIFY_CODE, RIDE_STATUS.ON_TRIP].includes(ride.status)) {
+    return ride;
+  }
   ensureRideStatus(ride, [RIDE_STATUS.DRIVER_ASSIGNED]);
 
   await appendRideStatus(ride, RIDE_STATUS.DRIVER_ARRIVING, "driver");
@@ -229,6 +245,8 @@ async function moveRideToArriving(rideId) {
 
 async function exposeRideOtp(rideId) {
   const ride = await Ride.findById(rideId);
+  // Idempotent: already at or past VERIFY_CODE
+  if (ride && [RIDE_STATUS.VERIFY_CODE, RIDE_STATUS.ON_TRIP].includes(ride.status)) return ride;
   ensureRideStatus(ride, [RIDE_STATUS.DRIVER_ARRIVING, RIDE_STATUS.DRIVER_ASSIGNED]);
 
   await appendRideStatus(ride, RIDE_STATUS.VERIFY_CODE, "system");

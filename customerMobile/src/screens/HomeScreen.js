@@ -1,69 +1,142 @@
-import React, { useState } from "react";
+import * as Location from "expo-location";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  TextInput,
-  Modal,
+  ActivityIndicator,
   ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
+import MapPicker from "../components/MapPicker";
+import { fetchRideOptions } from "../services/customerApi";
+import { formatCurrency, resolveLocation } from "../utils/location";
 
 const BOTTOM_BAR_HEIGHT = 60;
 
-const ChevronDown = () => (
-  <Text style={{ fontSize: 16, color: '#999' }}>▼</Text>
-);
+function ChevronDown() {
+  return <Text style={{ fontSize: 16, color: "#999" }}>v</Text>;
+}
 
-export default function HomeScreen({ navigation, setScreen }) {
-  const [destination, setDestination] = useState(null);
-  const [customDestination, setCustomDestination] = useState("");
+export default function HomeScreen({ userData, homeMetadata, setScreen }) {
+  const [destination, setDestination] = useState(null); // full location object { label, address, coordinates }
+  const [customDestText, setCustomDestText] = useState("");
   const [showLocationOptions, setShowLocationOptions] = useState(false);
-  const [showMapModal, setShowMapModal] = useState(false);
+  const [showMapPicker, setShowMapPicker] = useState(false);
   const [rideType, setRideType] = useState(null);
   const [destinationError, setDestinationError] = useState("");
   const [hasInteracted, setHasInteracted] = useState(false);
+  const [rideOptions, setRideOptions] = useState([]);
+  const [optionsLoading, setOptionsLoading] = useState(false);
+  const [pickupLocation, setPickupLocation] = useState(null); // real GPS location for pickup
 
-  const popularLocations = [
-    "Airport",
-    "Railway Station",
-    "Bus Stand",
-    "Mall",
-    "Hospital",
-  ];
+  const popularLocations = homeMetadata?.popularLocations?.length
+    ? homeMetadata.popularLocations
+    : ["Airport", "Railway Station", "Bus Stand", "Mall", "Hospital"];
 
-  const finalDestination = destination || customDestination;
+  // Default pickup from user profile (fallback if GPS unavailable)
+  const profilePickup = useMemo(
+    () => resolveLocation(userData?.defaultArea || userData?.city || "Connaught Place", userData?.city),
+    [userData?.defaultArea, userData?.city]
+  );
 
-  const validateDestination = (value) => {
-    if (!value || value.trim().length === 0) {
-      return "Please select or enter a destination";
-    }
-    if (value.trim().length < 3) {
-      return "Destination must be at least 3 characters";
-    }
-    return "";
-  };
+  // Auto-detect GPS location for pickup on mount
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== "granted" || cancelled) return;
+        const pos = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+        if (cancelled) return;
+        const { latitude, longitude } = pos.coords;
+        setPickupLocation({
+          label: "Current Location",
+          address: "Current Location",
+          coordinates: { lat: latitude, lng: longitude },
+        });
+      } catch {
+        // GPS unavailable, fall back to profile area
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const activePickup = pickupLocation || profilePickup;
+
+  // Display label for destination
+  const destinationLabel = destination?.label || customDestText;
+
+  // Load ride options when destination changes
+  useEffect(() => {
+    let ignore = false;
+
+    const loadRideOptions = async () => {
+      const destCoords = destination?.coordinates;
+      if (!destination && customDestText.trim().length < 3) {
+        setRideOptions([]);
+        return;
+      }
+
+      const resolvedDrop = destination
+        ? destination
+        : resolveLocation(customDestText, userData?.city);
+
+      if (!resolvedDrop?.coordinates) {
+        setRideOptions([]);
+        return;
+      }
+
+      try {
+        setOptionsLoading(true);
+        const response = await fetchRideOptions({
+          pickup: activePickup.coordinates,
+          drop: resolvedDrop.coordinates,
+        });
+        if (!ignore) setRideOptions(response.options || []);
+      } catch {
+        if (!ignore) setRideOptions([]);
+      } finally {
+        if (!ignore) setOptionsLoading(false);
+      }
+    };
+
+    loadRideOptions();
+    return () => { ignore = true; };
+  }, [destination, customDestText, activePickup.coordinates, userData?.city]);
 
   const handleContinue = () => {
     setHasInteracted(true);
-    const error = validateDestination(finalDestination);
-    
-    if (error) {
-      setDestinationError(error);
+    if (!destinationLabel || destinationLabel.trim().length < 3) {
+      setDestinationError("Please select or enter a destination");
       return;
     }
-    
-    if (!rideType) {
-      return;
-    }
+    if (!rideType) return;
+
+    const finalDestination = destination || resolveLocation(customDestText, userData?.city);
 
     setScreen({
-      NAME: 'BOOK-RIDE',
-      DATA: { destination, rideType, customDestination }
+      NAME: "BOOK-RIDE",
+      DATA: {
+        pickupLocation: activePickup,
+        destinationLocation: finalDestination,
+        rideType,
+      },
     });
   };
 
-  const isFormComplete = finalDestination.trim().length >= 3 && rideType !== null;
+  const handleMapConfirm = (locationResult) => {
+    setDestination(locationResult);
+    setCustomDestText("");
+    setDestinationError("");
+    setShowMapPicker(false);
+    setShowLocationOptions(false);
+  };
+
+  const isFormComplete = destinationLabel.trim().length >= 3 && rideType !== null;
 
   return (
     <View style={styles.container}>
@@ -74,8 +147,22 @@ export default function HomeScreen({ navigation, setScreen }) {
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.topBar}>
-          <View style={styles.topBlock} />
-          <View style={styles.topBlockSmall} />
+          <View>
+            <Text style={styles.welcomeText}>Welcome back</Text>
+            <Text style={styles.userText}>{userData?.fullName || "Customer"}</Text>
+          </View>
+          <View style={styles.cityPill}>
+            <Text style={styles.cityText}>{userData?.defaultArea || userData?.city || "Delhi"}</Text>
+          </View>
+        </View>
+
+        {/* Pickup indicator */}
+        <View style={styles.pickupRow}>
+          <Text style={styles.pickupDot}>●</Text>
+          <Text style={styles.pickupText} numberOfLines={1}>
+            {pickupLocation ? "Current Location" : (userData?.defaultArea || userData?.city || "Delhi")}
+          </Text>
+          {!pickupLocation && <ActivityIndicator size="small" color="#555" style={{ marginLeft: 6 }} />}
         </View>
 
         <View style={styles.mainCard}>
@@ -84,8 +171,8 @@ export default function HomeScreen({ navigation, setScreen }) {
             onPress={() => setShowLocationOptions((prev) => !prev)}
             activeOpacity={0.7}
           >
-            <Text style={styles.destinationText}>
-              {finalDestination || "Where To Go Today?"}
+            <Text style={styles.destinationText} numberOfLines={2}>
+              {destinationLabel || "Where to go today?"}
             </Text>
             <View style={styles.dropdownIcon}>
               <ChevronDown />
@@ -96,15 +183,15 @@ export default function HomeScreen({ navigation, setScreen }) {
             <Text style={styles.errorText}>{destinationError}</Text>
           ) : null}
 
-          {showLocationOptions && (
+          {showLocationOptions ? (
             <View style={styles.optionsList}>
               {popularLocations.map((place) => (
                 <TouchableOpacity
                   key={place}
                   style={styles.optionItem}
                   onPress={() => {
-                    setDestination(place);
-                    setCustomDestination("");
+                    setDestination(resolveLocation(place, userData?.city));
+                    setCustomDestText("");
                     setDestinationError("");
                     setShowLocationOptions(false);
                   }}
@@ -117,22 +204,24 @@ export default function HomeScreen({ navigation, setScreen }) {
               <TextInput
                 placeholder="Enter precise location"
                 placeholderTextColor="#777"
-                value={customDestination}
+                value={customDestText}
                 onChangeText={(text) => {
-                  setCustomDestination(text);
+                  setCustomDestText(text);
                   setDestination(null);
                   if (hasInteracted) {
-                    setDestinationError(validateDestination(text));
+                    setDestinationError(
+                      text.trim().length < 3 ? "Destination must be at least 3 characters" : ""
+                    );
                   }
                 }}
                 style={styles.textInput}
               />
             </View>
-          )}
+          ) : null}
 
           <TouchableOpacity
             style={styles.mapButton}
-            onPress={() => setShowMapModal(true)}
+            onPress={() => setShowMapPicker(true)}
             activeOpacity={0.7}
           >
             <Text style={styles.mapButtonText}>Choose on Map</Text>
@@ -140,44 +229,39 @@ export default function HomeScreen({ navigation, setScreen }) {
         </View>
 
         <View style={styles.rideOptions}>
-          <TouchableOpacity
-            style={[
-              styles.rideCard,
-              rideType === "shared" && styles.rideCardActive,
-            ]}
-            onPress={() => setRideType("shared")}
-            activeOpacity={0.7}
-          >
-            <Text
-              style={[
-                styles.rideText,
-                rideType === "shared" && { color: "#000" }
-              ]}
-            >Shared Ride</Text>
-          </TouchableOpacity>
+          {["shared", "personal"].map((typeKey) => {
+            const option = rideOptions.find((item) => item.rideType === typeKey);
+            const isActive = rideType === typeKey;
 
-          <TouchableOpacity
-            style={[
-              styles.rideCard,
-              rideType === "personal" && styles.rideCardActive,
-            ]}
-            onPress={() => setRideType("personal")}
-            activeOpacity={0.7}
-          >
-            <Text
-              style={[
-                styles.rideText,
-                rideType === "personal" && { color: "#000" }
-              ]}
-            >Personal Ride</Text>
-          </TouchableOpacity>
+            return (
+              <TouchableOpacity
+                key={typeKey}
+                style={[styles.rideCard, isActive && styles.rideCardActive]}
+                onPress={() => setRideType(typeKey)}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.rideText, isActive && { color: "#000" }]}>
+                  {typeKey === "shared" ? "Shared Ride" : "Personal Ride"}
+                </Text>
+                {optionsLoading ? (
+                  <ActivityIndicator color={isActive ? "#000" : "#fff"} size="small" />
+                ) : option ? (
+                  <>
+                    <Text style={[styles.metaText, isActive && { color: "#333" }]}>
+                      {formatCurrency(option.estimatedFare)}
+                    </Text>
+                    <Text style={[styles.metaText, isActive && { color: "#333" }]}>
+                      {option.etaMinutes} min
+                    </Text>
+                  </>
+                ) : null}
+              </TouchableOpacity>
+            );
+          })}
         </View>
 
         <TouchableOpacity
-          style={[
-            styles.continueButton,
-            !isFormComplete && styles.continueButtonDisabled,
-          ]}
+          style={[styles.continueButton, !isFormComplete && styles.continueButtonDisabled]}
           disabled={!isFormComplete}
           onPress={handleContinue}
           activeOpacity={0.8}
@@ -186,69 +270,40 @@ export default function HomeScreen({ navigation, setScreen }) {
         </TouchableOpacity>
       </ScrollView>
 
-      <Modal visible={showMapModal} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Select Location</Text>
-
-            <View style={styles.mapPlaceholder}>
-              <Text style={{ color: "#555" }}>Map Placeholder</Text>
-            </View>
-
-            <TouchableOpacity
-              style={styles.confirmButton}
-              onPress={() => {
-                setDestination("Selected from Map");
-                setCustomDestination("");
-                setDestinationError("");
-                setShowMapModal(false);
-              }}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.confirmText}>Confirm Location</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity onPress={() => setShowMapModal(false)}>
-              <Text style={styles.cancelText}>Cancel</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
+      <MapPicker
+        visible={showMapPicker}
+        title="Select Destination"
+        initialCoord={pickupLocation?.coordinates}
+        onConfirm={handleMapConfirm}
+        onCancel={() => setShowMapPicker(false)}
+      />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#0E0E0E",
-    paddingTop: 14,
-  },
-
-  scrollContent: {
-    alignItems: "center",
-    paddingBottom: BOTTOM_BAR_HEIGHT + 20,
-  },
-
+  container: { flex: 1, backgroundColor: "#0E0E0E", paddingTop: 14 },
+  scrollContent: { alignItems: "center", paddingBottom: BOTTOM_BAR_HEIGHT + 20 },
   topBar: {
     width: "92%",
     flexDirection: "row",
     justifyContent: "space-between",
-    marginBottom: 18,
+    alignItems: "center",
+    marginBottom: 10,
   },
-  topBlock: {
-    width: "60%",
-    height: 42,
-    backgroundColor: "#1C1C1C",
-    borderRadius: 12,
+  welcomeText: { color: "#777", fontSize: 13 },
+  userText: { color: "#fff", fontSize: 24, fontWeight: "700", marginTop: 4 },
+  cityPill: { backgroundColor: "#1C1C1C", borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10 },
+  cityText: { color: "#EDEDED", fontWeight: "600" },
+  pickupRow: {
+    width: "92%",
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 12,
+    paddingHorizontal: 4,
   },
-  topBlockSmall: {
-    width: "28%",
-    height: 42,
-    backgroundColor: "#1C1C1C",
-    borderRadius: 12,
-  },
-
+  pickupDot: { color: "#4ade80", fontSize: 10, marginRight: 8 },
+  pickupText: { color: "#777", fontSize: 13, flex: 1 },
   mainCard: {
     width: "92%",
     backgroundColor: "#141414",
@@ -260,7 +315,6 @@ const styles = StyleSheet.create({
     shadowRadius: 20,
     elevation: 12,
   },
-
   destinationHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -272,35 +326,14 @@ const styles = StyleSheet.create({
     fontSize: 26,
     fontWeight: "700",
     letterSpacing: -0.5,
+    flex: 1,
+    paddingRight: 12,
   },
-  dropdownIcon: {
-    opacity: 0.7,
-  },
-
-  errorText: {
-    color: "#FF4444",
-    fontSize: 13,
-    marginBottom: 10,
-    paddingLeft: 4,
-  },
-
-  optionsList: {
-    backgroundColor: "#1A1A1A",
-    borderRadius: 10,
-    marginBottom: 14,
-    overflow: "hidden",
-  },
-  optionItem: {
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: "#2A2A2A",
-  },
-  optionText: {
-    fontSize: 18,
-    color: "#F5F5F5",
-  },
-
+  dropdownIcon: { opacity: 0.7 },
+  errorText: { color: "#FF4444", fontSize: 13, marginBottom: 10, paddingLeft: 4 },
+  optionsList: { backgroundColor: "#1A1A1A", borderRadius: 10, marginBottom: 14, overflow: "hidden" },
+  optionItem: { paddingVertical: 14, paddingHorizontal: 16, borderBottomWidth: 1, borderBottomColor: "#2A2A2A" },
+  optionText: { fontSize: 18, color: "#F5F5F5" },
   textInput: {
     paddingVertical: 14,
     paddingHorizontal: 16,
@@ -312,26 +345,9 @@ const styles = StyleSheet.create({
     borderColor: "#2A2A2A",
     fontSize: 16,
   },
-
-  mapButton: {
-    marginTop: 10,
-    paddingVertical: 14,
-    borderRadius: 10,
-    backgroundColor: "#1F1F1F",
-    alignItems: "center",
-  },
-  mapButtonText: {
-    color: "#EDEDED",
-    fontWeight: "600",
-    letterSpacing: 0.3,
-  },
-
-  rideOptions: {
-    width: "92%",
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 24,
-  },
+  mapButton: { marginTop: 10, paddingVertical: 14, borderRadius: 10, backgroundColor: "#1F1F1F", alignItems: "center" },
+  mapButtonText: { color: "#EDEDED", fontWeight: "600", letterSpacing: 0.3 },
+  rideOptions: { width: "92%", flexDirection: "row", justifyContent: "space-between", marginBottom: 24 },
   rideCard: {
     width: "48%",
     backgroundColor: "#141414",
@@ -340,16 +356,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     borderWidth: 1,
     borderColor: "#222",
+    gap: 6,
   },
-  rideCardActive: {
-    backgroundColor: "#FFFFFF",
-  },
-  rideText: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#FFF",
-  },
-
+  rideCardActive: { backgroundColor: "#FFFFFF" },
+  rideText: { fontSize: 16, fontWeight: "700", color: "#FFF" },
+  metaText: { fontSize: 12, color: "#AAA" },
   continueButton: {
     width: "92%",
     paddingVertical: 16,
@@ -358,54 +369,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 20,
   },
-  continueButtonDisabled: {
-    backgroundColor: "#2A2A2A",
-  },
-  continueText: {
-    color: "#000",
-    fontSize: 16,
-    fontWeight: "800",
-    letterSpacing: 0.4,
-  },
-
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.6)",
-    justifyContent: "flex-end",
-  },
-  modalContent: {
-    backgroundColor: "#111",
-    padding: 20,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-  },
-  modalTitle: {
-    color: "#5c3b3bff",
-    fontSize: 18,
-    fontWeight: "700",
-    marginBottom: 14,
-  },
-  mapPlaceholder: {
-    height: 220,
-    backgroundColor: "#1F1F1F",
-    borderRadius: 18,
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: 18,
-  },
-  confirmButton: {
-    backgroundColor: "#FFF",
-    paddingVertical: 14,
-    borderRadius: 14,
-    alignItems: "center",
-  },
-  confirmText: {
-    color: "#000",
-    fontWeight: "700",
-  },
-  cancelText: {
-    textAlign: "center",
-    marginTop: 14,
-    color: "#888",
-  },
+  continueButtonDisabled: { backgroundColor: "#2A2A2A" },
+  continueText: { color: "#000", fontSize: 16, fontWeight: "800", letterSpacing: 0.4 },
 });

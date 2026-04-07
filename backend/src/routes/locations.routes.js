@@ -24,37 +24,31 @@ function createLocationsRouter() {
       lng: Number(req.query.dropLng),
     };
 
-    const shared = buildEstimate({
-      pickup,
-      drop,
-      rideType: RIDE_TYPE.SHARED,
-      passengerCount: 1,
-    });
-    const personal = buildEstimate({
-      pickup,
-      drop,
-      rideType: RIDE_TYPE.PERSONAL,
-      passengerCount: 1,
-    });
+    try {
+      const shared = buildEstimate({ pickup, drop, rideType: RIDE_TYPE.SHARED, passengerCount: 1 });
+      const personal = buildEstimate({ pickup, drop, rideType: RIDE_TYPE.PERSONAL, passengerCount: 1 });
 
-    ok(res, {
-      options: [
-        {
-          rideType: RIDE_TYPE.SHARED,
-          maxCapacity: 2,
-          estimatedFare: shared.fareEstimate,
-          etaMinutes: shared.etaMinutes,
-          surge: false,
-        },
-        {
-          rideType: RIDE_TYPE.PERSONAL,
-          maxCapacity: 4,
-          estimatedFare: personal.fareEstimate,
-          etaMinutes: personal.etaMinutes,
-          surge: false,
-        },
-      ],
-    });
+      ok(res, {
+        options: [
+          {
+            rideType: RIDE_TYPE.SHARED,
+            maxCapacity: 2,
+            estimatedFare: shared.fareEstimate,
+            etaMinutes: shared.etaMinutes,
+            surge: false,
+          },
+          {
+            rideType: RIDE_TYPE.PERSONAL,
+            maxCapacity: 4,
+            estimatedFare: personal.fareEstimate,
+            etaMinutes: personal.etaMinutes,
+            surge: false,
+          },
+        ],
+      });
+    } catch {
+      ok(res, { options: [] });
+    }
   });
 
   return router;

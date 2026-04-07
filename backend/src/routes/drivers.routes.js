@@ -2,6 +2,7 @@ const express = require("express");
 const { asyncHandler } = require("../lib/async-handler");
 const { ok } = require("../lib/http");
 const { emitRideLifecycle, SOCKET_EVENT } = require("../services/socket.service");
+const { Customer } = require("../models/customer.model");
 const { Driver } = require("../models/driver.model");
 const { Ride } = require("../models/ride.model");
 const { updateDriverLocation, updateDriverStatus } = require("../services/driver.service");
@@ -90,6 +91,27 @@ function createDriversRouter() {
         reason: req.body.reason,
       });
       ok(res, ride);
+    })
+  );
+
+  router.get(
+    "/:driverId/active-ride",
+    asyncHandler(async (req, res) => {
+      const activeRide = await Ride.findOne({
+        driverId: req.params.driverId,
+        status: { $in: ["DRIVER_ASSIGNED", "DRIVER_ARRIVING", "VERIFY_CODE", "ON_TRIP"] },
+      }).lean();
+
+      if (activeRide) {
+        const customer = await Customer.findById(activeRide.customerId)
+          .select("fullName mobile")
+          .lean();
+        activeRide.customer = customer
+          ? { id: String(activeRide.customerId), name: customer.fullName, mobile: customer.mobile }
+          : null;
+      }
+
+      ok(res, activeRide || null);
     })
   );
 

@@ -1,0 +1,32 @@
+.hiw-header { margin-bottom: 64px; }
+
+.steps-container { display: flex; flex-direction: column; gap: 0; max-width: 680px; }
+
+.step-item { display: flex; gap: 24px; }
+
+.step-left { display: flex; flex-direction: column; align-items: center; width: 48px; flex-shrink: 0; }
+.step-number-wrap { display: flex; flex-direction: column; align-items: center; width: 100%; flex: 1; }
+.step-number { font-size: 11px; font-weight: 900; letter-spacing: 2px; margin-bottom: 12px; }
+.step-connector { flex: 1; width: 1px; background: var(--border); min-height: 40px; margin-bottom: 12px; }
+
+.step-content {
+  display: flex; gap: 20px; align-items: flex-start;
+  padding-bottom: 40px; flex: 1;
+}
+.step-item:last-child .step-content { padding-bottom: 0; }
+
+.step-icon-ring {
+  width: 48px; height: 48px; border-radius: 14px; flex-shrink: 0;
+  border: 1.5px solid; display: flex; align-items: center; justify-content: center;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+.step-item:hover .step-icon-ring { transform: scale(1.06); }
+
+.step-text { flex: 1; }
+.step-title { font-size: 18px; font-weight: 800; margin-bottom: 8px; }
+.step-desc { font-size: 14px; color: var(--text-secondary); line-height: 1.7; }
+
+@media (max-width: 600px) {
+  .steps-container { max-width: 100%; }
+  .step-content { flex-direction: column; gap: 12px; }
+}

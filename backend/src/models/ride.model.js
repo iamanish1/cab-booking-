@@ -40,6 +40,7 @@ const rideSchema = new mongoose.Schema(
     statusVersion: { type: Number, default: 1 },
     statusTimeline: { type: [rideStatusHistorySchema], default: [] },
     otpHash: { type: String, default: null },
+    otpCode: { type: String, default: null },
     assignedAt: { type: Date, default: null },
     startedAt: { type: Date, default: null },
     completedAt: { type: Date, default: null, index: true },

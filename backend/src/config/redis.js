@@ -38,28 +38,44 @@ function createCacheClient(logger) {
     maxRetriesPerRequest: 1,
     enableReadyCheck: true,
     lazyConnect: true,
+    retryStrategy: () => null, // disable automatic reconnect
   });
 
-  client.on("error", (error) => {
-    logger.warn({ error: error.message }, "Redis connection error");
+  client.on("error", () => {
+    // suppress repeated logs; handled once in connect()
   });
+
+  // Wraps the Redis client and falls back to MemoryCache if not connected
+  const memory = new MemoryCache();
+  let delegate = memory; // start with memory until Redis confirms connected
 
   return {
     async get(key) {
-      return client.get(key);
+      return delegate.get(key);
     },
     async set(key, value, ttlSeconds) {
-      if (ttlSeconds) {
-        await client.set(key, value, "EX", ttlSeconds);
-        return;
-      }
-      await client.set(key, value);
+      return delegate.set(key, value, ttlSeconds);
     },
     async del(key) {
-      await client.del(key);
+      return delegate.del(key);
     },
     async connect() {
-      await client.connect();
+      try {
+        await client.connect();
+        // Promote to Redis
+        delegate = {
+          async get(key) { return client.get(key); },
+          async set(key, value, ttlSeconds) {
+            if (ttlSeconds) return client.set(key, value, "EX", ttlSeconds);
+            return client.set(key, value);
+          },
+          async del(key) { return client.del(key); },
+        };
+        logger.info("Redis connected");
+      } catch (error) {
+        logger.warn({ error: error.message }, "Redis unavailable, using in-memory cache fallback");
+        // delegate stays as MemoryCache
+      }
     },
   };
 }

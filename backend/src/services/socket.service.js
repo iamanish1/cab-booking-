@@ -15,6 +15,14 @@ function setSocketServer(io) {
       if (rideId) socket.leave(`ride:${rideId}`);
       if (customerId) socket.leave(`customer:${customerId}`);
     });
+
+    socket.on("driver:subscribe", ({ driverId }) => {
+      if (driverId) socket.join(`driver:${driverId}`);
+    });
+
+    socket.on("driver:unsubscribe", ({ driverId }) => {
+      if (driverId) socket.leave(`driver:${driverId}`);
+    });
   });
 }
 
@@ -26,6 +34,11 @@ function emitToRide(rideId, event, payload) {
 function emitToCustomer(customerId, event, payload) {
   if (!ioInstance) return;
   ioInstance.to(`customer:${String(customerId)}`).emit(event, payload);
+}
+
+function emitToDriver(driverId, event, payload) {
+  if (!ioInstance) return;
+  ioInstance.to(`driver:${String(driverId)}`).emit(event, payload);
 }
 
 function emitRideLifecycle(ride, event, extra = {}) {
@@ -45,5 +58,6 @@ module.exports = {
   SOCKET_EVENT,
   emitRideLifecycle,
   emitToCustomer,
+  emitToDriver,
   setSocketServer,
 };

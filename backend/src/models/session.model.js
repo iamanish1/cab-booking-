@@ -2,7 +2,9 @@ const mongoose = require("mongoose");
 
 const sessionSchema = new mongoose.Schema(
   {
-    customerId: { type: mongoose.Schema.Types.ObjectId, ref: "Customer", required: true, index: true },
+    customerId: { type: mongoose.Schema.Types.ObjectId, ref: "Customer", default: null, index: true },
+    driverId: { type: mongoose.Schema.Types.ObjectId, ref: "Driver", default: null, index: true },
+    role: { type: String, enum: ["customer", "driver"], default: "customer" },
     refreshTokenHash: { type: String, required: true },
     device: { type: Object, default: {} },
     expiresAt: { type: Date, required: true },

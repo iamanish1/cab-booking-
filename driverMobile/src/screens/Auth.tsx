@@ -8,51 +8,28 @@ import {
   Modal,
   KeyboardAvoidingView,
   Platform,
+  Alert,
+  ScrollView,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { User } from "../helpers/types";
+import { requestOtp, verifyOtp } from "../services/driverApi";
+import { DriverProfile } from "../helpers/types";
 
 type AuthMode = "LOGIN" | "REGISTER";
 
-type Props = {
-  setIsLoggedIn: (v: boolean) => void;
-};
+interface Props {
+  onAuthenticated: (driver: DriverProfile) => void;
+}
 
-// Mock user database - simulates backend
-const MOCK_USERS = {
-  "9876543210": {
-    fullName: "Rajesh Kumar",
-    mobileNumber: "9876543210",
-    vehicleNumber: "DL-1CA-1234",
-    vehicleCapacity: "4",
-    city: "Delhi"
-  },
-  "9876543211": {
-    fullName: "Amit Singh",
-    mobileNumber: "9876543211",
-    vehicleNumber: "DL-3CB-5678",
-    vehicleCapacity: "6",
-    city: "Delhi"
-  },
-  "9876543212": {
-    fullName: "Priya Sharma",
-    mobileNumber: "9876543212",
-    vehicleNumber: "DL-5CC-9012",
-    vehicleCapacity: "4",
-    city: "Noida"
-  }
-};
-
-export default function AuthScreen({ setIsLoggedIn }: Props) {
+export default function AuthScreen({ onAuthenticated }: Props) {
   const [mode, setMode] = useState<AuthMode>("LOGIN");
   const [showOTP, setShowOTP] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [requestId, setRequestId] = useState("");
+  const [otpPreview, setOtpPreview] = useState("");
 
-  // COMMON
   const [mobile, setMobile] = useState("");
   const [otp, setOtp] = useState("");
-
-  // REGISTER ONLY
   const [name, setName] = useState("");
   const [city, setCity] = useState("");
   const [vehicleCapacity, setVehicleCapacity] = useState("");
@@ -62,41 +39,44 @@ export default function AuthScreen({ setIsLoggedIn }: Props) {
 
   const canSendOTP =
     mobile.length === 10 &&
-    (isLogin || (name && city && vehicleCapacity));
+    (isLogin || (name.trim() && city.trim() && vehicleCapacity && vehicleNumber.trim()));
 
-  const sendOTP = () => {
-    setShowOTP(true);
+  const sendOTP = async () => {
+    try {
+      setLoading(true);
+      const result = await requestOtp(mobile);
+      setRequestId(result.requestId);
+      if (result.otpPreview) setOtpPreview(result.otpPreview);
+      setShowOTP(true);
+    } catch (err: any) {
+      Alert.alert("Error", err.message || "Failed to send OTP");
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const verifyOTP = async () => {
-    if (mode === "REGISTER") {
-      // Save new user data during registration
-      const userData: User = {
-        fullName: name,
-        mobileNumber: mobile,
-        vehicleNumber,
-        vehicleCapacity,
-        city,
-      };
-      await AsyncStorage.setItem("user", JSON.stringify(userData));
-    } else {
-      // LOGIN mode - fetch mock user data from "backend"
-      const mockUser = MOCK_USERS[mobile as keyof typeof MOCK_USERS];
-      
-      if (mockUser) {
-        // Simulate backend response - save user data to AsyncStorage
-        await AsyncStorage.setItem("user", JSON.stringify(mockUser));
-      } else {
-        alert("User not found. Please register or use a valid mobile number.");
-        setShowOTP(false);
-        setOtp("");
-        return;
-      }
-    }
+  const verifyAndLogin = async () => {
+    try {
+      setLoading(true);
+      const profile = isLogin
+        ? { role: "driver" as const }
+        : {
+            role: "driver" as const,
+            fullName: name,
+            city,
+            vehicleNumber,
+            vehicleCapacity,
+          };
 
-    await AsyncStorage.setItem("isLoggedIn", "true");
-    setShowOTP(false);
-    setIsLoggedIn(true);
+      const result = await verifyOtp({ requestId, mobile, otp, profile });
+      setShowOTP(false);
+      onAuthenticated(result.driver);
+    } catch (err: any) {
+      Alert.alert("Invalid OTP", err.message || "Please try again");
+      setOtp("");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -104,86 +84,67 @@ export default function AuthScreen({ setIsLoggedIn }: Props) {
       style={styles.container}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
-      {/* HEADER */}
-      <View style={styles.header}>
-        <Text style={styles.brand}>DRIVER</Text>
-        <Text style={styles.subTitle}>
-          {isLogin ? "Sign in to drive" : "Register as a driver"}
-        </Text>
-      </View>
-
-      {/* FORM CARD */}
-      <View style={styles.card}>
-        {!isLogin && (
-          <>
-            <Input icon="person-outline" placeholder="Full name" value={name} onChangeText={setName} />
-            <Input icon="location-outline" placeholder="City" value={city} onChangeText={setCity} />
-            <Input
-              icon="car-outline"
-              placeholder="Vehicle Number"
-              value={vehicleNumber}
-              onChangeText={setVehicleNumber}
-            />
-            <Input
-              icon="people-outline"
-              placeholder="Vehicle capacity"
-              keyboardType="number-pad"
-              value={vehicleCapacity}
-              onChangeText={setVehicleCapacity}
-            />
-          </>
-        )}
-
-        <Input
-          icon="call-outline"
-          placeholder="Mobile number"
-          keyboardType="phone-pad"
-          value={mobile}
-          onChangeText={setMobile}
-        />
-
-        {isLogin && (
-          <Text style={styles.hintText}>
-            Demo: 9876543210, 9876543211, 9876543212
+      <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+        <View style={styles.header}>
+          <Text style={styles.brand}>DRIVER</Text>
+          <Text style={styles.subTitle}>
+            {isLogin ? "Sign in to drive" : "Register as a driver"}
           </Text>
-        )}
+        </View>
 
-        <Pressable
-          style={[
-            styles.primaryBtn,
-            !canSendOTP && styles.disabledBtn,
-          ]}
-          disabled={!canSendOTP}
-          onPress={sendOTP}
-        >
-          <Text style={styles.primaryText}>Send OTP</Text>
+        <View style={styles.card}>
+          {!isLogin && (
+            <>
+              <Input icon="person-outline" placeholder="Full name" value={name} onChangeText={setName} />
+              <Input icon="location-outline" placeholder="City (e.g. Delhi)" value={city} onChangeText={setCity} />
+              <Input
+                icon="car-outline"
+                placeholder="Vehicle number (e.g. DL01AB1234)"
+                value={vehicleNumber}
+                onChangeText={setVehicleNumber}
+              />
+              <Input
+                icon="people-outline"
+                placeholder="Vehicle capacity (seats)"
+                keyboardType="number-pad"
+                value={vehicleCapacity}
+                onChangeText={setVehicleCapacity}
+              />
+            </>
+          )}
+
+          <Input
+            icon="call-outline"
+            placeholder="Mobile number (10 digits)"
+            keyboardType="phone-pad"
+            value={mobile}
+            onChangeText={setMobile}
+          />
+
+          <Pressable
+            style={[styles.primaryBtn, (!canSendOTP || loading) && styles.disabledBtn]}
+            disabled={!canSendOTP || loading}
+            onPress={sendOTP}
+          >
+            <Text style={styles.primaryText}>{loading ? "Sending..." : "Send OTP"}</Text>
+          </Pressable>
+        </View>
+
+        <Pressable onPress={() => setMode((p) => (p === "LOGIN" ? "REGISTER" : "LOGIN"))}>
+          <Text style={styles.switchText}>
+            {isLogin ? "New driver? Register here" : "Already registered? Login"}
+          </Text>
         </Pressable>
-      </View>
+      </ScrollView>
 
-      {/* SWITCH */}
-      <Pressable
-        onPress={() =>
-          setMode((p) => (p === "LOGIN" ? "REGISTER" : "LOGIN"))
-        }
-      >
-        <Text style={styles.switchText}>
-          {isLogin
-            ? "New driver? Register"
-            : "Already registered? Login"}
-        </Text>
-      </Pressable>
-
-      {/* OTP MODAL */}
       <Modal visible={showOTP} transparent animationType="slide">
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Enter OTP</Text>
-            <Text style={styles.modalSub}>
-              Sent to +91 {mobile}
-            </Text>
-            <Text style={styles.modalHint}>
-              Use any 6-digit code for demo
-            </Text>
+            <Text style={styles.modalSub}>Sent to +91 {mobile}</Text>
+            {otpPreview ? (
+              <Text style={styles.otpPreviewText}>Dev preview: {otpPreview}</Text>
+            ) : null}
 
             <TextInput
               style={styles.otpInput}
@@ -196,17 +157,14 @@ export default function AuthScreen({ setIsLoggedIn }: Props) {
             />
 
             <Pressable
-              style={[
-                styles.primaryBtn,
-                otp.length !== 6 && styles.disabledBtn,
-              ]}
-              disabled={otp.length !== 6}
-              onPress={verifyOTP}
+              style={[styles.primaryBtn, (otp.length !== 6 || loading) && styles.disabledBtn]}
+              disabled={otp.length !== 6 || loading}
+              onPress={verifyAndLogin}
             >
-              <Text style={styles.primaryText}>Verify & Continue</Text>
+              <Text style={styles.primaryText}>{loading ? "Verifying..." : "Verify & Continue"}</Text>
             </Pressable>
 
-            <Pressable onPress={() => setShowOTP(false)}>
+            <Pressable onPress={() => { setShowOTP(false); setOtp(""); }}>
               <Text style={styles.cancelText}>Cancel</Text>
             </Pressable>
           </View>
@@ -216,23 +174,15 @@ export default function AuthScreen({ setIsLoggedIn }: Props) {
   );
 }
 
-/* ---------- INPUT ---------- */
-
-type InputProps = {
+interface InputProps {
   icon: keyof typeof Ionicons.glyphMap;
   placeholder: string;
   value: string;
   onChangeText: (t: string) => void;
   keyboardType?: "default" | "phone-pad" | "number-pad";
-};
+}
 
-function Input({
-  icon,
-  placeholder,
-  value,
-  onChangeText,
-  keyboardType = "default",
-}: InputProps) {
+function Input({ icon, placeholder, value, onChangeText, keyboardType = "default" }: InputProps) {
   return (
     <View style={styles.inputWrap}>
       <Ionicons name={icon} size={18} color="#777" />
@@ -248,40 +198,13 @@ function Input({
   );
 }
 
-/* ---------- STYLES ---------- */
-
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#fff",
-    justifyContent: "center",
-    paddingHorizontal: 24,
-  },
-
-  header: {
-    marginBottom: 36,
-  },
-
-  brand: {
-    fontSize: 32,
-    fontWeight: "800",
-    color: "#000",
-    letterSpacing: 2,
-  },
-
-  subTitle: {
-    color: "#666",
-    marginTop: 6,
-    fontSize: 14,
-  },
-
-  card: {
-    backgroundColor: "#000",
-    borderRadius: 16,
-    padding: 20,
-    marginBottom: 20,
-  },
-
+  container: { flex: 1, backgroundColor: "#fff" },
+  scroll: { flexGrow: 1, justifyContent: "center", paddingHorizontal: 24, paddingVertical: 40 },
+  header: { marginBottom: 36 },
+  brand: { fontSize: 32, fontWeight: "800", color: "#000", letterSpacing: 2 },
+  subTitle: { color: "#666", marginTop: 6, fontSize: 14 },
+  card: { backgroundColor: "#000", borderRadius: 16, padding: 20, marginBottom: 20 },
   inputWrap: {
     flexDirection: "row",
     alignItems: "center",
@@ -290,20 +213,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     gap: 10,
   },
-
-  input: {
-    flex: 1,
-    color: "#fff",
-    fontSize: 15,
-  },
-
-  hintText: {
-    color: "#666",
-    fontSize: 11,
-    marginTop: 8,
-    marginLeft: 28,
-  },
-
+  input: { flex: 1, color: "#fff", fontSize: 15 },
   primaryBtn: {
     backgroundColor: "#fff",
     paddingVertical: 14,
@@ -311,55 +221,14 @@ const styles = StyleSheet.create({
     marginTop: 24,
     alignItems: "center",
   },
-
-  disabledBtn: {
-    opacity: 0.4,
-  },
-
-  primaryText: {
-    color: "#000",
-    fontWeight: "700",
-    fontSize: 15,
-  },
-
-  switchText: {
-    textAlign: "center",
-    color: "#000",
-    fontWeight: "600",
-    marginTop: 10,
-  },
-
-  /* MODAL */
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.6)",
-    justifyContent: "flex-end",
-  },
-
-  modalCard: {
-    backgroundColor: "#fff",
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    padding: 24,
-  },
-
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "#000",
-  },
-
-  modalSub: {
-    color: "#666",
-    marginVertical: 6,
-  },
-
-  modalHint: {
-    color: "#999",
-    fontSize: 12,
-    marginTop: 2,
-  },
-
+  disabledBtn: { opacity: 0.4 },
+  primaryText: { color: "#000", fontWeight: "700", fontSize: 15 },
+  switchText: { textAlign: "center", color: "#000", fontWeight: "600", marginTop: 10 },
+  modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "flex-end" },
+  modalCard: { backgroundColor: "#fff", borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24 },
+  modalTitle: { fontSize: 18, fontWeight: "700", color: "#000" },
+  modalSub: { color: "#666", marginVertical: 6 },
+  otpPreviewText: { color: "#16a34a", fontSize: 12, marginBottom: 4 },
   otpInput: {
     borderBottomWidth: 2,
     borderBottomColor: "#000",
@@ -370,10 +239,5 @@ const styles = StyleSheet.create({
     marginVertical: 20,
     color: "#000",
   },
-
-  cancelText: {
-    textAlign: "center",
-    marginTop: 14,
-    color: "#666",
-  },
+  cancelText: { textAlign: "center", marginTop: 14, color: "#666" },
 });

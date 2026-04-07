@@ -1,45 +1,111 @@
-import { View, Text, StyleSheet } from 'react-native'
-import React, { useEffect, useState } from 'react'
-import { ScreenState, User } from './helpers/types';
-import AuthScreen from './screens/Auth';
-import Home from './screens/Home';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import RideScreen from './screens/RideScreen';
+import React, { useEffect, useState } from "react";
+import { ActivityIndicator, View } from "react-native";
+import { loadSession, clearSession, getSession } from "./services/session";
+import { getActiveRide } from "./services/driverApi";
+import { connectDriverSocket, disconnectDriverSocket } from "./services/driverSocket";
+import AuthScreen from "./screens/Auth";
+import HomeScreen from "./screens/Home";
+import RideScreen from "./screens/RideScreen";
+import { DriverProfile, ScreenState, ActiveRide } from "./helpers/types";
 
 export default function App() {
-  const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
+  const [bootstrapping, setBootstrapping] = useState(true);
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [driver, setDriver] = useState<DriverProfile | null>(null);
   const [screen, setScreen] = useState<ScreenState>("HOME");
-  const [userData, setUserData] = useState<User | undefined>(undefined);
+  const [activeRide, setActiveRide] = useState<ActiveRide | null>(null);
 
   useEffect(() => {
-    const bootstrap = async () => {
-      const loggedIn = await AsyncStorage.getItem("isLoggedIn");
-      if (loggedIn === "true") {
-        const rawUser = await AsyncStorage.getItem("user");
-        if (rawUser) {
-          setUserData(JSON.parse(rawUser));
-          setIsLoggedIn(true);
-        } else {
-          // Fallback if no user data found
-          setIsLoggedIn(false);
-        }
-      }
-    };
     bootstrap();
   }, []);
 
+  const bootstrap = async () => {
+    try {
+      const session = await loadSession();
+      if (!session) {
+        setIsLoggedIn(false);
+        return;
+      }
+
+      setDriver(session.driver);
+
+      // Connect socket
+      connectDriverSocket(session.driverId);
+
+      // Check for active ride
+      try {
+        const ride = await getActiveRide(session.driverId);
+        if (ride) {
+          setActiveRide(ride);
+          setScreen("ACTIVE_RIDE");
+        }
+      } catch {
+        // no active ride is fine
+      }
+
+      setIsLoggedIn(true);
+    } catch {
+      await clearSession();
+      setIsLoggedIn(false);
+    } finally {
+      setBootstrapping(false);
+    }
+  };
+
+  const handleAuthenticated = async (driverProfile: DriverProfile) => {
+    setDriver(driverProfile);
+    const session = getSession();
+    if (session) connectDriverSocket(session.driverId);
+    setIsLoggedIn(true);
+  };
+
+  const handleLogout = async () => {
+    const session = getSession();
+    if (session) disconnectDriverSocket(session.driverId);
+    await clearSession();
+    setDriver(null);
+    setActiveRide(null);
+    setScreen("HOME");
+    setIsLoggedIn(false);
+  };
+
+  const handleRideAccepted = (ride: ActiveRide) => {
+    setActiveRide(ride);
+    setScreen("ACTIVE_RIDE");
+  };
+
+  const handleRideDone = () => {
+    setActiveRide(null);
+    setScreen("HOME");
+  };
+
+  if (bootstrapping) {
+    return (
+      <View style={{ flex: 1, backgroundColor: "#000", alignItems: "center", justifyContent: "center" }}>
+        <ActivityIndicator color="#fff" size="large" />
+      </View>
+    );
+  }
+
   if (!isLoggedIn) {
-    return <AuthScreen setIsLoggedIn={setIsLoggedIn} />;
+    return <AuthScreen onAuthenticated={handleAuthenticated} />;
   }
 
-  switch (screen) {
-    case "HOME":
-      return <Home setScreen={setScreen} userData={userData} />;
-
-    case "ACTIVE_RIDE":
-      return <RideScreen setScreen={setScreen} />
-
-    default:
-      return null;
+  if (screen === "ACTIVE_RIDE" && activeRide) {
+    return (
+      <RideScreen
+        ride={activeRide}
+        driver={driver!}
+        onRideDone={handleRideDone}
+      />
+    );
   }
+
+  return (
+    <HomeScreen
+      driver={driver!}
+      onRideAccepted={handleRideAccepted}
+      onLogout={handleLogout}
+    />
+  );
 }

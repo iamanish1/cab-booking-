@@ -27,6 +27,10 @@ const env = {
   customerCashbackBonus: Number(process.env.CUSTOMER_CASHBACK_BONUS || 20),
   logLevel: process.env.LOG_LEVEL || "info",
   webhookSignatureSecret: process.env.WEBHOOK_SIGNATURE_SECRET || "dev-webhook-secret",
+  nodeEnv: process.env.NODE_ENV || "development",
+  twilioAccountSid: process.env.TWILIO_ACCOUNT_SID || "",
+  twilioAuthToken: process.env.TWILIO_AUTH_TOKEN || "",
+  twilioPhoneNumber: process.env.TWILIO_PHONE_NUMBER || "",
 };
 
 module.exports = { env };
