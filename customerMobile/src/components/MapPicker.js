@@ -10,10 +10,63 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import MapView, { Marker } from "react-native-maps";
+import { WebView } from "react-native-webview";
 
 const DELHI_CENTER = { latitude: 28.6139, longitude: 77.209 };
-const DEFAULT_DELTA = { latitudeDelta: 0.05, longitudeDelta: 0.05 };
+
+function getMapHTML(lat, lng) {
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #111; }
+    #map { width: 100%; height: 100%; }
+    #pin {
+      position: fixed; top: 50%; left: 50%;
+      transform: translate(-50%, -100%);
+      font-size: 34px; z-index: 9999; pointer-events: none; line-height: 1;
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div id="pin">📍</div>
+  <script>
+    var map = L.map('map', { zoomControl: true, attributionControl: false })
+               .setView([${lat}, ${lng}], 15);
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19, subdomains: ['a','b','c']
+    }).addTo(map);
+
+    function emit() {
+      var c = map.getCenter();
+      window.ReactNativeWebView.postMessage(
+        JSON.stringify({ type: 'loc', lat: c.lat, lng: c.lng })
+      );
+    }
+
+    map.on('moveend', emit);
+
+    function onMsg(e) {
+      try {
+        var d = JSON.parse(e.data);
+        if (d.type === 'goto') map.setView([d.lat, d.lng], d.z || 15);
+      } catch(_) {}
+    }
+    document.addEventListener('message', onMsg);
+    window.addEventListener('message', onMsg);
+
+    setTimeout(emit, 600);
+  </script>
+</body>
+</html>`;
+}
 
 async function reverseGeocode(lat, lng) {
   try {
@@ -47,7 +100,7 @@ async function searchPlaces(query) {
 }
 
 export default function MapPicker({ visible, title, initialCoord, onConfirm, onCancel }) {
-  const mapRef = useRef(null);
+  const webViewRef = useRef(null);
   const geocodeTimer = useRef(null);
   const searchTimer = useRef(null);
 
@@ -62,6 +115,7 @@ export default function MapPicker({ visible, title, initialCoord, onConfirm, onC
   const [searchText, setSearchText] = useState("");
   const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
+  const [mapReady, setMapReady] = useState(false);
 
   const geocodeCoord = useCallback((latitude, longitude) => {
     if (geocodeTimer.current) clearTimeout(geocodeTimer.current);
@@ -73,14 +127,16 @@ export default function MapPicker({ visible, title, initialCoord, onConfirm, onC
     }, 800);
   }, []);
 
-  const handleRegionChangeComplete = useCallback(
-    (region) => {
-      const { latitude, longitude } = region;
-      setSelectedCoord({ latitude, longitude });
-      geocodeCoord(latitude, longitude);
-    },
-    [geocodeCoord]
-  );
+  // Receive location from WebView map center
+  const handleWebViewMessage = useCallback((event) => {
+    try {
+      const data = JSON.parse(event.nativeEvent.data);
+      if (data.type === "loc") {
+        setSelectedCoord({ latitude: data.lat, longitude: data.lng });
+        geocodeCoord(data.lat, data.lng);
+      }
+    } catch (_) {}
+  }, [geocodeCoord]);
 
   const goToMyLocation = useCallback(async () => {
     try {
@@ -89,9 +145,11 @@ export default function MapPicker({ visible, title, initialCoord, onConfirm, onC
       if (status !== "granted") return;
       const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
       const { latitude, longitude } = pos.coords;
-      mapRef.current?.animateToRegion({ latitude, longitude, ...DEFAULT_DELTA }, 500);
       setSelectedCoord({ latitude, longitude });
       geocodeCoord(latitude, longitude);
+      webViewRef.current?.injectJavaScript(
+        `map.setView([${latitude}, ${longitude}], 15); true;`
+      );
     } catch { /* location unavailable */ }
     finally { setLocating(false); }
   }, [geocodeCoord]);
@@ -110,12 +168,13 @@ export default function MapPicker({ visible, title, initialCoord, onConfirm, onC
   }, []);
 
   const handleSelectSearchResult = (item) => {
-    const region = { latitude: item.lat, longitude: item.lng, ...DEFAULT_DELTA };
-    mapRef.current?.animateToRegion(region, 500);
     setSelectedCoord({ latitude: item.lat, longitude: item.lng });
     setAddressLabel(item.label);
     setSearchText(item.label);
     setSearchResults([]);
+    webViewRef.current?.injectJavaScript(
+      `map.setView([${item.lat}, ${item.lng}], 15); true;`
+    );
   };
 
   const handleConfirm = async () => {
@@ -133,6 +192,7 @@ export default function MapPicker({ visible, title, initialCoord, onConfirm, onC
     if (visible) {
       setSearchText("");
       setSearchResults([]);
+      setMapReady(false);
       if (!initialCoord) {
         goToMyLocation();
       } else {
@@ -144,6 +204,8 @@ export default function MapPicker({ visible, title, initialCoord, onConfirm, onC
       if (searchTimer.current) clearTimeout(searchTimer.current);
     };
   }, [visible]);
+
+  const mapHTML = getMapHTML(startCoord.latitude, startCoord.longitude);
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onCancel}>
@@ -193,16 +255,16 @@ export default function MapPicker({ visible, title, initialCoord, onConfirm, onC
 
         {/* Map */}
         <View style={styles.mapWrapper}>
-          <MapView
-            ref={mapRef}
+          <WebView
+            ref={webViewRef}
             style={styles.map}
-            initialRegion={{ ...startCoord, ...DEFAULT_DELTA }}
-            onRegionChangeComplete={handleRegionChangeComplete}
-            showsUserLocation
-            showsMyLocationButton={false}
-          >
-            <Marker coordinate={selectedCoord} />
-          </MapView>
+            source={{ html: mapHTML }}
+            javaScriptEnabled
+            onMessage={handleWebViewMessage}
+            onLoad={() => setMapReady(true)}
+            scrollEnabled={false}
+            bounces={false}
+          />
 
           {/* My Location FAB */}
           <TouchableOpacity

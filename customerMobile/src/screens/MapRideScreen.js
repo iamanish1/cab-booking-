@@ -8,7 +8,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import MapView, { Marker, Polyline } from "react-native-maps";
+import { WebView } from "react-native-webview";
 import { Ionicons } from "@expo/vector-icons";
 import { cancelRide, getRide } from "../services/customerApi";
 import { subscribeToRide } from "../services/rideSocket";
@@ -28,6 +28,87 @@ const STATUS_TEXT = {
   NO_DRIVER_AVAILABLE: "No driver available",
 };
 
+function getRideMapHTML(pickup, drop) {
+  const pLat = pickup?.lat ?? 28.6139;
+  const pLng = pickup?.lng ?? 77.209;
+  const dLat = drop?.lat ?? pLat;
+  const dLng = drop?.lng ?? pLng;
+  const midLat = (pLat + dLat) / 2;
+  const midLng = (pLng + dLng) / 2;
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    * { margin: 0; padding: 0; }
+    html, body { width: 100%; height: 100%; background: #111; }
+    #map { width: 100%; height: 100%; }
+    .emoji-icon { font-size: 24px; line-height: 1; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <script>
+    var map = L.map('map', { zoomControl: false, attributionControl: false })
+               .setView([${midLat}, ${midLng}], 14);
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19, subdomains: ['a','b','c']
+    }).addTo(map);
+
+    var greenIcon = L.divIcon({ html: '<div class="emoji-icon">🟢</div>', className: '', iconSize: [24,24], iconAnchor: [12,12] });
+    var redIcon   = L.divIcon({ html: '<div class="emoji-icon">🔴</div>', className: '', iconSize: [24,24], iconAnchor: [12,12] });
+    var carIcon   = L.divIcon({ html: '<div class="emoji-icon">🚗</div>', className: '', iconSize: [30,30], iconAnchor: [15,15] });
+
+    var pickupMarker = L.marker([${pLat}, ${pLng}], { icon: greenIcon }).addTo(map).bindPopup('Pickup');
+    var dropMarker   = L.marker([${dLat}, ${dLng}], { icon: redIcon }).addTo(map).bindPopup('Drop');
+    var driverMarker = null;
+    var routeLine    = null;
+
+    var bounds = [[${pLat}, ${pLng}], [${dLat}, ${dLng}]];
+    map.fitBounds(bounds, { padding: [50, 50] });
+
+    function refreshRoute() {
+      if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
+      var coords = [];
+      if (driverMarker) coords.push(driverMarker.getLatLng());
+      coords.push(pickupMarker.getLatLng());
+      coords.push(dropMarker.getLatLng());
+      if (coords.length >= 2) {
+        routeLine = L.polyline(coords, { color: '#3b82f6', weight: 3 }).addTo(map);
+      }
+    }
+
+    function onMsg(e) {
+      try {
+        var d = JSON.parse(e.data);
+        if (d.type === 'driver') {
+          var ll = [d.lat, d.lng];
+          if (!driverMarker) {
+            driverMarker = L.marker(ll, { icon: carIcon }).addTo(map).bindPopup('Driver');
+          } else {
+            driverMarker.setLatLng(ll);
+          }
+          map.panTo(ll);
+          refreshRoute();
+        }
+        if (d.type === 'focus') {
+          if (driverMarker) map.panTo(driverMarker.getLatLng());
+          else map.panTo(pickupMarker.getLatLng());
+        }
+      } catch(_) {}
+    }
+    document.addEventListener('message', onMsg);
+    window.addEventListener('message', onMsg);
+  </script>
+</body>
+</html>`;
+}
+
 export default function MapRideScreen({
   setScreen,
   rideId,
@@ -42,7 +123,7 @@ export default function MapRideScreen({
   const [error, setError] = useState("");
   const [showCompletionModal, setShowCompletionModal] = useState(false);
   const [driverLocation, setDriverLocation] = useState(null);
-  const mapRef = useRef(null);
+  const webViewRef = useRef(null);
   const previousStatus = useRef(ride?.status);
   const rideUpdatedRef = useRef(onRideUpdated);
   const walletUpdatedRef = useRef(onWalletUpdated);
@@ -50,6 +131,15 @@ export default function MapRideScreen({
   useEffect(() => { rideUpdatedRef.current = onRideUpdated; }, [onRideUpdated]);
   useEffect(() => { walletUpdatedRef.current = onWalletUpdated; }, [onWalletUpdated]);
   useEffect(() => { setCurrentRide(ride); }, [ride]);
+
+  // Send driver location to WebView whenever it updates
+  useEffect(() => {
+    if (driverLocation && webViewRef.current) {
+      webViewRef.current.injectJavaScript(
+        `onMsg({ data: JSON.stringify({ type: 'driver', lat: ${driverLocation.latitude}, lng: ${driverLocation.longitude} }) }); true;`
+      );
+    }
+  }, [driverLocation]);
 
   useEffect(() => {
     let isMounted = true;
@@ -113,16 +203,6 @@ export default function MapRideScreen({
     };
   }, [customerId, rideId]);
 
-  // Pan map to driver when location updates
-  useEffect(() => {
-    if (driverLocation && mapRef.current) {
-      mapRef.current.animateToRegion(
-        { ...driverLocation, latitudeDelta: 0.02, longitudeDelta: 0.02 },
-        600
-      );
-    }
-  }, [driverLocation]);
-
   if (loading) {
     return (
       <View style={styles.centered}>
@@ -147,21 +227,9 @@ export default function MapRideScreen({
   const canCancel = ["SEARCHING_DRIVER", "DRIVER_ASSIGNED", "DRIVER_ARRIVING", "VERIFY_CODE"].includes(currentRide.status);
   const isTerminal = ["CANCELLED_BY_CUSTOMER", "CANCELLED_BY_DRIVER", "NO_DRIVER_AVAILABLE"].includes(currentRide.status);
 
-  const pickupCoord = currentRide.pickup?.coordinates
-    ? { latitude: currentRide.pickup.coordinates.lat, longitude: currentRide.pickup.coordinates.lng }
-    : null;
-  const dropCoord = currentRide.drop?.coordinates
-    ? { latitude: currentRide.drop.coordinates.lat, longitude: currentRide.drop.coordinates.lng }
-    : null;
-
-  const mapInitialRegion = driverLocation || pickupCoord
-    ? {
-        latitude: (driverLocation || pickupCoord).latitude,
-        longitude: (driverLocation || pickupCoord).longitude,
-        latitudeDelta: 0.04,
-        longitudeDelta: 0.04,
-      }
-    : null;
+  const pickup = currentRide.pickup?.coordinates;
+  const drop = currentRide.drop?.coordinates;
+  const mapHTML = getRideMapHTML(pickup, drop);
 
   const handleCancelRide = async () => {
     try {
@@ -176,31 +244,14 @@ export default function MapRideScreen({
   return (
     <View style={styles.container}>
       {/* Map */}
-      {mapInitialRegion ? (
-        <MapView ref={mapRef} style={styles.map} initialRegion={mapInitialRegion} showsUserLocation>
-          {pickupCoord && <Marker coordinate={pickupCoord} title="Pickup" pinColor="green" />}
-          {dropCoord && <Marker coordinate={dropCoord} title="Drop" pinColor="red" />}
-          {driverLocation && (
-            <Marker coordinate={driverLocation} title="Driver">
-              <View style={styles.driverMarker}>
-                <Text style={styles.driverEmoji}>🚗</Text>
-              </View>
-            </Marker>
-          )}
-          {pickupCoord && dropCoord && (
-            <Polyline
-              coordinates={[...(driverLocation ? [driverLocation] : []), pickupCoord, dropCoord]}
-              strokeColor="#3b82f6"
-              strokeWidth={3}
-            />
-          )}
-        </MapView>
-      ) : (
-        <View style={styles.mapLoading}>
-          <ActivityIndicator color="#fff" />
-          <Text style={styles.mapLoadingText}>Loading map...</Text>
-        </View>
-      )}
+      <WebView
+        ref={webViewRef}
+        style={styles.map}
+        source={{ html: mapHTML }}
+        javaScriptEnabled
+        scrollEnabled={false}
+        bounces={false}
+      />
 
       {/* Status pill */}
       <View style={styles.statusPill}>
@@ -300,10 +351,6 @@ const styles = StyleSheet.create({
   homeButton: { backgroundColor: "#fff", paddingHorizontal: 20, paddingVertical: 12, borderRadius: 12 },
   homeButtonText: { color: "#000", fontWeight: "700" },
   map: { flex: 1 },
-  mapLoading: { flex: 1, backgroundColor: "#111", alignItems: "center", justifyContent: "center", gap: 12 },
-  mapLoadingText: { color: "#555" },
-  driverMarker: { alignItems: "center" },
-  driverEmoji: { fontSize: 28 },
   statusPill: {
     position: "absolute",
     top: 50,

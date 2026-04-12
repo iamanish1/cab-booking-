@@ -12,7 +12,7 @@ import {
   TextInput,
   View,
 } from "react-native";
-import MapView, { Marker, Polyline } from "react-native-maps";
+import { WebView } from "react-native-webview";
 import {
   arriveAtPickup,
   cancelRide,
@@ -76,6 +76,89 @@ const STATUS_CONFIG: Record<
   },
 };
 
+function getRideMapHTML(
+  pickup: { lat: number; lng: number },
+  drop: { lat: number; lng: number }
+): string {
+  const midLat = (pickup.lat + drop.lat) / 2;
+  const midLng = (pickup.lng + drop.lng) / 2;
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    * { margin: 0; padding: 0; }
+    html, body { width: 100%; height: 100%; background: #111; }
+    #map { width: 100%; height: 100%; }
+    .emoji-icon { font-size: 24px; line-height: 1; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <script>
+    var map = L.map('map', { zoomControl: false, attributionControl: false })
+               .setView([${midLat}, ${midLng}], 14);
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19, subdomains: ['a','b','c']
+    }).addTo(map);
+
+    var greenIcon = L.divIcon({ html: '<div class="emoji-icon">🟢</div>', className: '', iconSize: [24,24], iconAnchor: [12,12] });
+    var redIcon   = L.divIcon({ html: '<div class="emoji-icon">🔴</div>', className: '', iconSize: [24,24], iconAnchor: [12,12] });
+    var carIcon   = L.divIcon({ html: '<div class="emoji-icon">🚗</div>', className: '', iconSize: [30,30], iconAnchor: [15,15] });
+
+    var pickupMarker = L.marker([${pickup.lat}, ${pickup.lng}], { icon: greenIcon }).addTo(map).bindPopup('Pickup');
+    var dropMarker   = L.marker([${drop.lat}, ${drop.lng}], { icon: redIcon }).addTo(map).bindPopup('Drop');
+    var driverMarker = null;
+    var routeLine    = null;
+
+    map.fitBounds([[${pickup.lat}, ${pickup.lng}], [${drop.lat}, ${drop.lng}]], { padding: [50, 50] });
+
+    function refreshRoute() {
+      if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
+      var coords = [];
+      if (driverMarker) coords.push(driverMarker.getLatLng());
+      coords.push(isOnTrip ? dropMarker.getLatLng() : pickupMarker.getLatLng());
+      if (coords.length >= 2) {
+        routeLine = L.polyline(coords, { color: '#3b82f6', weight: 3, dashArray: '6,3' }).addTo(map);
+      }
+    }
+
+    var isOnTrip = false;
+
+    function onMsg(e) {
+      try {
+        var d = JSON.parse(e.data);
+        if (d.type === 'driver') {
+          var ll = [d.lat, d.lng];
+          if (!driverMarker) {
+            driverMarker = L.marker(ll, { icon: carIcon }).addTo(map).bindPopup('You');
+          } else {
+            driverMarker.setLatLng(ll);
+          }
+          refreshRoute();
+        }
+        if (d.type === 'ontrip') {
+          isOnTrip = d.value;
+          refreshRoute();
+        }
+        if (d.type === 'focus') {
+          var target = driverMarker ? driverMarker.getLatLng() : pickupMarker.getLatLng();
+          map.setView(target, 15);
+        }
+      } catch(_) {}
+    }
+    document.addEventListener('message', onMsg);
+    window.addEventListener('message', onMsg);
+  </script>
+</body>
+</html>`;
+}
+
 export default function RideScreen({ ride: initialRide, driver, onRideDone }: Props) {
   const [ride, setRide] = useState<ActiveRide>(initialRide);
   const [loading, setLoading] = useState(false);
@@ -85,7 +168,7 @@ export default function RideScreen({ ride: initialRide, driver, onRideDone }: Pr
   const [otp, setOtp] = useState("");
   const [driverCoord, setDriverCoord] = useState<DriverCoord | null>(null);
   const locationWatchRef = useRef<Location.LocationSubscription | null>(null);
-  const mapRef = useRef<MapView>(null);
+  const webViewRef = useRef<WebView>(null);
 
   const statusCfg = STATUS_CONFIG[ride.status] ?? {
     label: ride.status,
@@ -97,13 +180,28 @@ export default function RideScreen({ ride: initialRide, driver, onRideDone }: Pr
   const isOnTrip = ride.status === "ON_TRIP";
   const isTerminal = ["COMPLETED", "CANCELLED_BY_CUSTOMER", "CANCELLED_BY_DRIVER", "NO_DRIVER_AVAILABLE"].includes(ride.status);
 
+  // Sync driver location to WebView
+  useEffect(() => {
+    if (driverCoord && webViewRef.current) {
+      webViewRef.current.injectJavaScript(
+        `onMsg({ data: JSON.stringify({ type: 'driver', lat: ${driverCoord.latitude}, lng: ${driverCoord.longitude} }) }); true;`
+      );
+    }
+  }, [driverCoord]);
+
+  // Sync trip state to WebView
+  useEffect(() => {
+    webViewRef.current?.injectJavaScript(
+      `onMsg({ data: JSON.stringify({ type: 'ontrip', value: ${isOnTrip} }) }); true;`
+    );
+  }, [isOnTrip]);
+
   // Subscribe to ride events via socket
   useEffect(() => {
     const unsub = subscribeToRideEvents(ride._id, (eventName, payload) => {
       if (payload?.status) {
         setRide((prev) => ({ ...prev, status: payload.status }));
       }
-      // Auto-show OTP modal when status flips to VERIFY_CODE via socket
       if (eventName === "ride:otp_ready" || payload?.status === "VERIFY_CODE") {
         setShowOtpModal(true);
       }
@@ -117,7 +215,7 @@ export default function RideScreen({ ride: initialRide, driver, onRideDone }: Pr
     return unsub;
   }, [ride._id]);
 
-  // Auto-navigate away when status becomes terminal (from socket updates)
+  // Auto-navigate away when status becomes terminal
   useEffect(() => {
     if (isTerminal && ride.status !== "COMPLETED") {
       const t = setTimeout(onRideDone, 2500);
@@ -156,12 +254,16 @@ export default function RideScreen({ ride: initialRide, driver, onRideDone }: Pr
     };
   }, []);
 
-  const pickupCoord = { latitude: ride.pickup.lat, longitude: ride.pickup.lng };
-  const dropCoord = { latitude: ride.drop.lat, longitude: ride.drop.lng };
-  const midLat = (pickupCoord.latitude + dropCoord.latitude) / 2;
-  const midLng = (pickupCoord.longitude + dropCoord.longitude) / 2;
-  const latDelta = Math.abs(pickupCoord.latitude - dropCoord.latitude) * 1.8 + 0.02;
-  const lngDelta = Math.abs(pickupCoord.longitude - dropCoord.longitude) * 1.8 + 0.02;
+  const pickupCoord = { lat: ride.pickup.lat, lng: ride.pickup.lng };
+  const dropCoord = { lat: ride.drop.lat, lng: ride.drop.lng };
+
+  const mapHTML = getRideMapHTML(pickupCoord, dropCoord);
+
+  const focusMap = () => {
+    webViewRef.current?.injectJavaScript(
+      `onMsg({ data: JSON.stringify({ type: 'focus' }) }); true;`
+    );
+  };
 
   const handleArrive = async () => {
     try {
@@ -169,7 +271,6 @@ export default function RideScreen({ ride: initialRide, driver, onRideDone }: Pr
       await arriveAtPickup(ride._id);
       setRide((prev) => ({ ...prev, status: "DRIVER_ARRIVING" }));
     } catch (err: any) {
-      // Idempotent — already past this status
       if (err.message?.includes("does not allow")) {
         setRide((prev) => ({ ...prev, status: "DRIVER_ARRIVING" }));
       } else {
@@ -225,53 +326,17 @@ export default function RideScreen({ ride: initialRide, driver, onRideDone }: Pr
     }
   };
 
-  const focusMap = () => {
-    const target = driverCoord ?? pickupCoord;
-    mapRef.current?.animateToRegion(
-      { ...target, latitudeDelta: 0.01, longitudeDelta: 0.01 },
-      500
-    );
-  };
-
   return (
     <View style={styles.container}>
       {/* Map */}
-      <MapView
-        ref={mapRef}
+      <WebView
+        ref={webViewRef}
         style={styles.map}
-        initialRegion={{
-          latitude: midLat,
-          longitude: midLng,
-          latitudeDelta: latDelta,
-          longitudeDelta: lngDelta,
-        }}
-      >
-        <Marker coordinate={pickupCoord} title="Pickup" pinColor="green" />
-        <Marker coordinate={dropCoord} title="Drop" pinColor="red" />
-        {driverCoord && (
-          <Marker coordinate={driverCoord} title="You">
-            <View style={styles.carMarker}>
-              <Text style={styles.carEmoji}>🚗</Text>
-            </View>
-          </Marker>
-        )}
-        <Polyline
-          coordinates={[
-            ...(driverCoord ? [driverCoord] : []),
-            isOnTrip ? dropCoord : pickupCoord,
-          ]}
-          strokeWidth={3}
-          strokeColor="#3b82f6"
-          lineDashPattern={[6, 3]}
-        />
-        {isOnTrip && (
-          <Polyline
-            coordinates={[pickupCoord, dropCoord]}
-            strokeWidth={2}
-            strokeColor="#9ca3af"
-          />
-        )}
-      </MapView>
+        source={{ html: mapHTML }}
+        javaScriptEnabled
+        scrollEnabled={false}
+        bounces={false}
+      />
 
       {/* Top floating buttons */}
       <SafeAreaView style={styles.topRow} pointerEvents="box-none">
@@ -409,7 +474,6 @@ export default function RideScreen({ ride: initialRide, driver, onRideDone }: Pr
           </View>
         )}
 
-        {/* Cancel button — only before trip starts */}
         {isPreTrip && (
           <Pressable
             style={styles.cancelBtn}
@@ -519,10 +583,7 @@ function SummaryRow({ label, value }: { label: string; value: string }) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#000" },
   map: { flex: 1 },
-  carMarker: { alignItems: "center" },
-  carEmoji: { fontSize: 28 },
 
-  // Top buttons
   topRow: {
     position: "absolute",
     top: 50,
@@ -542,7 +603,6 @@ const styles = StyleSheet.create({
   callBtn: { backgroundColor: "rgba(22,163,74,0.85)" },
   iconBtnText: { fontSize: 20 },
 
-  // Bottom card
   card: {
     position: "absolute",
     bottom: 0,
@@ -567,7 +627,6 @@ const styles = StyleSheet.create({
   statusLabel: { fontWeight: "700", fontSize: 13 },
   statusSub: { color: "#9ca3af", fontSize: 13, marginBottom: 14 },
 
-  // Passenger row
   passengerRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -592,18 +651,15 @@ const styles = StyleSheet.create({
 
   divider: { height: 1, backgroundColor: "#222", marginBottom: 14 },
 
-  // Location
   locationBlock: { flexDirection: "row", gap: 10, marginBottom: 12, alignItems: "flex-start" },
   locIcon: { color: "#16a34a", fontSize: 12, marginTop: 3 },
   locLabel: { color: "#6b7280", fontSize: 11, fontWeight: "600" },
   locText: { color: "#fff", fontSize: 14, fontWeight: "600", marginTop: 2 },
 
-  // Fare
   fareRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 16 },
   fareLabel: { color: "#6b7280", fontSize: 12 },
   fareAmount: { color: "#fff", fontSize: 18, fontWeight: "800", marginTop: 2 },
 
-  // Buttons
   primaryBtn: {
     backgroundColor: "#fff",
     paddingVertical: 15,
@@ -624,7 +680,6 @@ const styles = StyleSheet.create({
   terminalBox: { paddingVertical: 14, alignItems: "center" },
   terminalText: { fontSize: 17, fontWeight: "700" },
 
-  // Modals
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.75)",
@@ -662,7 +717,6 @@ const styles = StyleSheet.create({
   modalPrimaryText: { color: "#000", fontWeight: "800", fontSize: 15 },
   modalCancel: { color: "#9ca3af", textAlign: "center", fontSize: 14 },
 
-  // Summary
   summaryBox: {
     backgroundColor: "#000",
     borderRadius: 12,
