@@ -10,24 +10,32 @@ import {
   View,
 } from "react-native";
 import MapPicker from "../components/MapPicker";
-import { createRide, estimateRide } from "../services/customerApi";
+import RazorpayCheckout from "../components/RazorpayCheckout";
+import {
+  createPaymentOrder,
+  createRide,
+  estimateRide,
+  verifyPayment,
+} from "../services/customerApi";
 import { formatCurrency, resolveLocation } from "../utils/location";
 
 export default function BookRide({ userData, setScreen, data, onRideCreated }) {
-  const [pickupLocation, setPickupLocation] = useState(
-    data?.pickupLocation || null
-  );
-  const [showMapPicker, setShowMapPicker] = useState(false);
-  const [paymentMethod, setPaymentMethod] = useState("UPI");
+  const [pickupLocation, setPickupLocation] = useState(data?.pickupLocation || null);
+  const [showMapPicker, setShowMapPicker]   = useState(false);
+  const [paymentMethod, setPaymentMethod]   = useState("CASH");
   const [numberOfPeople, setNumberOfPeople] = useState(1);
-  const [estimate, setEstimate] = useState(null);
+  const [estimate, setEstimate]             = useState(null);
   const [loadingEstimate, setLoadingEstimate] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
+  const [submitting, setSubmitting]         = useState(false);
+
+  // Razorpay state
+  const [showRazorpay, setShowRazorpay]   = useState(false);
+  const [razorpayOrder, setRazorpayOrder] = useState(null);
 
   const destinationLocation = data?.destinationLocation;
   const maxCapacity = data?.rideType === "shared" ? 2 : 4;
 
-  // If no pickup from HomeScreen, try GPS then profile
+  // Auto-detect pickup location from GPS
   useEffect(() => {
     if (pickupLocation) return;
     let cancelled = false;
@@ -42,9 +50,7 @@ export default function BookRide({ userData, setScreen, data, onRideCreated }) {
           }
           return;
         }
-        const pos = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.Balanced,
-        });
+        const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
         if (cancelled) return;
         const { latitude, longitude } = pos.coords;
         setPickupLocation({
@@ -63,15 +69,11 @@ export default function BookRide({ userData, setScreen, data, onRideCreated }) {
     return () => { cancelled = true; };
   }, []);
 
-  // Recalculate estimate when pickup, destination or pax changes
+  // Recalculate fare estimate when inputs change
   useEffect(() => {
     let ignore = false;
-
     const loadEstimate = async () => {
-      if (!destinationLocation || !pickupLocation) {
-        setEstimate(null);
-        return;
-      }
+      if (!destinationLocation || !pickupLocation) { setEstimate(null); return; }
       try {
         setLoadingEstimate(true);
         const response = await estimateRide({
@@ -90,45 +92,67 @@ export default function BookRide({ userData, setScreen, data, onRideCreated }) {
         });
         if (!ignore) setEstimate(response);
       } catch (error) {
-        if (!ignore) {
-          setEstimate(null);
-          Alert.alert("Estimate failed", error.message);
-        }
+        if (!ignore) { setEstimate(null); Alert.alert("Estimate failed", error.message); }
       } finally {
         if (!ignore) setLoadingEstimate(false);
       }
     };
-
     loadEstimate();
     return () => { ignore = true; };
   }, [data.rideType, destinationLocation, pickupLocation, numberOfPeople]);
 
-  const goBack = () => setScreen({ NAME: "HOME", DATA: {} });
+  const buildRidePayload = () => ({
+    city: userData?.city || "Delhi",
+    rideType: data.rideType,
+    pickup: {
+      label: pickupLocation.label,
+      address: pickupLocation.address,
+      coordinates: pickupLocation.coordinates,
+    },
+    drop: {
+      label: destinationLocation.label,
+      address: destinationLocation.address,
+      coordinates: destinationLocation.coordinates,
+    },
+    paymentMethod,
+    passengerCount: numberOfPeople,
+  });
 
+  const doCreateRide = async () => {
+    const response = await createRide(buildRidePayload());
+    await onRideCreated(response.rideId);
+  };
+
+  // ─── CASH: create ride directly ───────────────────────────────────────────
+  // ─── UPI:  create Razorpay order → open checkout → verify → create ride ──
   const confirmRide = async () => {
     if (!destinationLocation || !pickupLocation) {
       Alert.alert("Location required", "Could not determine pickup location.");
       return;
     }
+
+    if (paymentMethod === "UPI") {
+      if (!estimate?.fareEstimate) {
+        Alert.alert("Fare not loaded", "Please wait for the fare estimate to load.");
+        return;
+      }
+      try {
+        setSubmitting(true);
+        const order = await createPaymentOrder(estimate.fareEstimate);
+        setRazorpayOrder(order);
+        setShowRazorpay(true);
+      } catch (error) {
+        Alert.alert("Payment setup failed", error.message);
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
+
+    // CASH flow
     try {
       setSubmitting(true);
-      const response = await createRide({
-        city: userData?.city || "Delhi",
-        rideType: data.rideType,
-        pickup: {
-          label: pickupLocation.label,
-          address: pickupLocation.address,
-          coordinates: pickupLocation.coordinates,
-        },
-        drop: {
-          label: destinationLocation.label,
-          address: destinationLocation.address,
-          coordinates: destinationLocation.coordinates,
-        },
-        paymentMethod,
-        passengerCount: numberOfPeople,
-      });
-      await onRideCreated(response.rideId);
+      await doCreateRide();
     } catch (error) {
       Alert.alert("Ride creation failed", error.message);
     } finally {
@@ -136,10 +160,36 @@ export default function BookRide({ userData, setScreen, data, onRideCreated }) {
     }
   };
 
-  const handleMapConfirm = (locationResult) => {
-    setPickupLocation(locationResult);
-    setShowMapPicker(false);
+  // Called when Razorpay checkout returns a success response
+  const handlePaymentSuccess = async (paymentResponse) => {
+    setShowRazorpay(false);
+    try {
+      setSubmitting(true);
+      await verifyPayment({
+        razorpayOrderId:   paymentResponse.razorpay_order_id,
+        razorpayPaymentId: paymentResponse.razorpay_payment_id,
+        razorpaySignature: paymentResponse.razorpay_signature,
+      });
+      await doCreateRide();
+    } catch (error) {
+      Alert.alert("Payment verification failed", error.message);
+    } finally {
+      setSubmitting(false);
+    }
   };
+
+  const handlePaymentDismissed = () => {
+    setShowRazorpay(false);
+    setRazorpayOrder(null);
+  };
+
+  const handlePaymentFailed = (description) => {
+    setShowRazorpay(false);
+    setRazorpayOrder(null);
+    Alert.alert("Payment Failed", description || "Your payment could not be processed. Please try again.");
+  };
+
+  const goBack = () => setScreen({ NAME: "HOME", DATA: {} });
 
   return (
     <View style={styles.container}>
@@ -194,14 +244,10 @@ export default function BookRide({ userData, setScreen, data, onRideCreated }) {
             >
               <Text style={styles.peopleButtonText}>-</Text>
             </TouchableOpacity>
-
             <View style={styles.peopleCount}>
               <Text style={styles.peopleNumber}>{numberOfPeople}</Text>
-              <Text style={styles.peopleLabel}>
-                {numberOfPeople === 1 ? "passenger" : "passengers"}
-              </Text>
+              <Text style={styles.peopleLabel}>{numberOfPeople === 1 ? "passenger" : "passengers"}</Text>
             </View>
-
             <TouchableOpacity
               style={[styles.peopleButton, numberOfPeople === maxCapacity && styles.peopleButtonDisabled]}
               onPress={() => setNumberOfPeople((v) => Math.min(maxCapacity, v + 1))}
@@ -245,18 +291,39 @@ export default function BookRide({ userData, setScreen, data, onRideCreated }) {
           )}
         </View>
 
-        {/* Payment */}
+        {/* Payment Method */}
         <View style={[styles.card, { marginBottom: 30 }]}>
           <Text style={styles.cardTitle}>Payment Method</Text>
-          {["UPI", "CASH"].map((method) => (
-            <TouchableOpacity
-              key={method}
-              style={[styles.paymentOption, paymentMethod === method && styles.paymentActive]}
-              onPress={() => setPaymentMethod(method)}
-            >
-              <Text style={styles.paymentText}>{method}</Text>
-            </TouchableOpacity>
-          ))}
+          <TouchableOpacity
+            style={[styles.paymentOption, paymentMethod === "CASH" && styles.paymentActive]}
+            onPress={() => setPaymentMethod("CASH")}
+          >
+            <View style={styles.paymentRow}>
+              <Text style={styles.paymentIcon}>💵</Text>
+              <View>
+                <Text style={styles.paymentText}>Cash</Text>
+                <Text style={styles.paymentSub}>Pay directly to driver</Text>
+              </View>
+            </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.paymentOption, paymentMethod === "UPI" && styles.paymentActive]}
+            onPress={() => setPaymentMethod("UPI")}
+          >
+            <View style={styles.paymentRow}>
+              <Text style={styles.paymentIcon}>📱</Text>
+              <View>
+                <Text style={styles.paymentText}>UPI / Card / Netbanking</Text>
+                <Text style={styles.paymentSub}>Secure payment via Razorpay</Text>
+              </View>
+              {paymentMethod === "UPI" && (
+                <View style={styles.razorpayBadge}>
+                  <Text style={styles.razorpayBadgeText}>Razorpay</Text>
+                </View>
+              )}
+            </View>
+          </TouchableOpacity>
         </View>
       </ScrollView>
 
@@ -266,11 +333,15 @@ export default function BookRide({ userData, setScreen, data, onRideCreated }) {
           onPress={confirmRide}
           disabled={!pickupLocation || submitting}
         >
-          <Text style={styles.confirmText}>
-            {submitting
-              ? "Confirming..."
-              : `Confirm Ride${estimate ? ` - ${formatCurrency(estimate.fareEstimate)}` : ""}`}
-          </Text>
+          {submitting ? (
+            <ActivityIndicator color="#000" />
+          ) : (
+            <Text style={styles.confirmText}>
+              {paymentMethod === "UPI"
+                ? `Pay & Confirm${estimate ? ` - ${formatCurrency(estimate.fareEstimate)}` : ""}`
+                : `Confirm Ride${estimate ? ` - ${formatCurrency(estimate.fareEstimate)}` : ""}`}
+            </Text>
+          )}
         </TouchableOpacity>
       </View>
 
@@ -278,8 +349,17 @@ export default function BookRide({ userData, setScreen, data, onRideCreated }) {
         visible={showMapPicker}
         title="Select Pickup Location"
         initialCoord={pickupLocation?.coordinates}
-        onConfirm={handleMapConfirm}
+        onConfirm={(locationResult) => { setPickupLocation(locationResult); setShowMapPicker(false); }}
         onCancel={() => setShowMapPicker(false)}
+      />
+
+      <RazorpayCheckout
+        visible={showRazorpay}
+        orderData={razorpayOrder}
+        userData={userData}
+        onSuccess={handlePaymentSuccess}
+        onDismiss={handlePaymentDismissed}
+        onFail={handlePaymentFailed}
       />
     </View>
   );
@@ -323,7 +403,12 @@ const styles = StyleSheet.create({
   totalValue: { color: "#fff", fontSize: 16, fontWeight: "700" },
   paymentOption: { padding: 14, borderRadius: 12, borderWidth: 1, borderColor: "#1f1f1f", marginTop: 8 },
   paymentActive: { borderColor: "#fff", backgroundColor: "#ffffff10" },
-  paymentText: { color: "#fff", fontSize: 15 },
+  paymentRow: { flexDirection: "row", alignItems: "center", gap: 12 },
+  paymentIcon: { fontSize: 24 },
+  paymentText: { color: "#fff", fontSize: 15, fontWeight: "600" },
+  paymentSub: { color: "#666", fontSize: 12, marginTop: 2 },
+  razorpayBadge: { marginLeft: "auto", backgroundColor: "#3395FF22", borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1, borderColor: "#3395FF55" },
+  razorpayBadgeText: { color: "#3395FF", fontSize: 11, fontWeight: "700" },
   footer: { position: "absolute", bottom: 100, width: "100%", paddingHorizontal: 16 },
   confirmButton: { backgroundColor: "#fff", height: 56, borderRadius: 18, alignItems: "center", justifyContent: "center" },
   confirmDisabled: { backgroundColor: "#2a2a2a" },

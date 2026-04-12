@@ -110,3 +110,17 @@ export function getWalletTransactions(limit = 20) {
 export function getTrips(limit = 20) {
   return apiRequest(`/trips/history?limit=${limit}`);
 }
+
+export function createPaymentOrder(amount) {
+  return apiRequest("/payments/razorpay/order", {
+    method: "POST",
+    body: { amount },
+  });
+}
+
+export function verifyPayment({ razorpayOrderId, razorpayPaymentId, razorpaySignature }) {
+  return apiRequest("/payments/razorpay/verify", {
+    method: "POST",
+    body: { razorpayOrderId, razorpayPaymentId, razorpaySignature },
+  });
+}

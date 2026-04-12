@@ -31,6 +31,9 @@ const env = {
   twilioAccountSid: process.env.TWILIO_ACCOUNT_SID || "",
   twilioAuthToken: process.env.TWILIO_AUTH_TOKEN || "",
   twilioPhoneNumber: process.env.TWILIO_PHONE_NUMBER || "",
+  razorpayKeyId: process.env.RAZORPAY_KEY_ID || "",
+  razorpayKeySecret: process.env.RAZORPAY_KEY_SECRET || "",
+  razorpayWebhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET || "",
 };
 
 module.exports = { env };
