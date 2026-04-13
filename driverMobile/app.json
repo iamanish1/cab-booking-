@@ -18,7 +18,7 @@
     },
     "android": {
       "package": "in.easyridess.driver",
-      "versionCode": 1,
+      "versionCode": 2,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#000000"
@@ -47,7 +47,7 @@
     ],
     "extra": {
       "eas": {
-        "projectId": ""
+        "projectId": "e3531342-26c8-4ae9-b657-b4a484544942"
       }
     }
   }
