@@ -1,26 +1,35 @@
 {
   "expo": {
-    "name": "cab-booking",
-    "slug": "cab-booking",
+    "name": "EasyRidess",
+    "slug": "easyridess-customer",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "dark",
     "newArchEnabled": true,
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#000000"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": false,
+      "bundleIdentifier": "in.easyridess.customer"
     },
     "android": {
+      "package": "in.easyridess.customer",
+      "versionCode": 2,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "backgroundColor": "#000000"
       },
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "permissions": [
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.INTERNET",
+        "android.permission.ACCESS_NETWORK_STATE"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -29,9 +38,15 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "Allow CabApp to access your location to show nearby drivers and auto-fill your pickup."
+          "locationWhenInUsePermission": "Allow EasyRidess to access your location to show nearby drivers and auto-fill your pickup."
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "3199c0d1-1dc4-4671-ad24-b52657d17169"
+      }
+    },
+    "owner": "iamanish"
   }
 }
