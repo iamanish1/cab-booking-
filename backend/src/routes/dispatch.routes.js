@@ -9,6 +9,7 @@ const { DRIVER_STATUS, RIDE_STATUS, SOCKET_EVENT, TRIP_EVENT } = require("../con
 const { emitRideLifecycle } = require("../services/socket.service");
 const { scheduleRideDispatch } = require("../services/dispatch.service");
 const { recordTripEvent } = require("../services/ride.service");
+const { sendExpoPushNotification } = require("../services/notification.service");
 
 function createDispatchRouter({ logger }) {
   const router = express.Router();
@@ -26,7 +27,15 @@ function createDispatchRouter({ logger }) {
 
       const driver = await Driver.findById(driverId);
       if (!driver) throw new AppError("Driver not found", 404);
-      if (driver.currentStatus !== DRIVER_STATUS.ONLINE) {
+
+      // Check the target ride first to allow BUSY shared-ride drivers to accept another shared ride
+      const targetRide = await Ride.findById(req.params.rideId);
+      const isSharedRide = targetRide?.rideType === "shared";
+      const driverIsEligible =
+        driver.currentStatus === DRIVER_STATUS.ONLINE ||
+        (driver.currentStatus === DRIVER_STATUS.BUSY && isSharedRide);
+
+      if (!driverIsEligible) {
         throw new AppError("Driver is not available", 409);
       }
 
@@ -56,9 +65,11 @@ function createDispatchRouter({ logger }) {
         throw new AppError("This ride was already accepted by another driver", 409);
       }
 
-      // Mark driver busy
-      driver.currentStatus = DRIVER_STATUS.BUSY;
-      await driver.save();
+      // Mark driver busy (no-op if already BUSY from a shared ride)
+      if (driver.currentStatus !== DRIVER_STATUS.BUSY) {
+        driver.currentStatus = DRIVER_STATUS.BUSY;
+        await driver.save();
+      }
 
       await recordTripEvent(ride._id, "driver", TRIP_EVENT.DRIVER_ASSIGNED, {
         driverId: String(driver._id),
@@ -80,7 +91,16 @@ function createDispatchRouter({ logger }) {
 
       logger.info({ rideId: String(ride._id), driverId: String(driver._id) }, "Driver accepted ride");
 
-      const customer = await Customer.findById(ride.customerId).select("fullName mobile").lean();
+      const customer = await Customer.findById(ride.customerId).select("fullName mobile expoPushToken").lean();
+
+      // Push notification to customer (best-effort, non-blocking)
+      if (customer?.expoPushToken) {
+        sendExpoPushNotification([customer.expoPushToken], {
+          title: "Driver Found!",
+          body: `${driver.fullName} is heading to your pickup`,
+          data: { rideId: String(ride._id), event: "DRIVER_ASSIGNED" },
+        }).catch(() => {});
+      }
 
       ok(res, {
         rideId: String(ride._id),

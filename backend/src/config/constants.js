@@ -71,8 +71,13 @@ const TERMINAL_RIDE_STATUSES = [
 ];
 
 const POPULAR_LOCATIONS = {
+  Jammu: [
+    "Railway Station", "Bus Stand", "Airport", "Raghunath Market",
+    "Gandhi Nagar", "Bakshi Nagar", "Trikuta Nagar", "GMC Hospital",
+    "Canal Road", "Parade Ground", "Residency Road", "Talab Tillo",
+    "Nagrota", "Kunjwani", "Janipur",
+  ],
   Delhi: ["Connaught Place", "Dwarka", "Rohini", "Karol Bagh", "Saket", "IGI Airport"],
-  Noida: ["Sector 18", "Sector 62", "Botanical Garden", "Film City"],
 };
 
 module.exports = {

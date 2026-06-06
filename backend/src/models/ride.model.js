@@ -47,6 +47,8 @@ const rideSchema = new mongoose.Schema(
     cancelledAt: { type: Date, default: null },
     cancellationReason: { type: String, default: "" },
     city: { type: String, default: "", index: true },
+    customerRating: { type: Number, default: null, min: 1, max: 5 },
+    driverRating: { type: Number, default: null, min: 1, max: 5 },
   },
   { timestamps: true }
 );

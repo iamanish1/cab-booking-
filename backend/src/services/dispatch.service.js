@@ -10,14 +10,26 @@ async function broadcastRideOffer(rideId, logger) {
   const ride = await Ride.findById(rideId);
   if (!ride || ride.status !== RIDE_STATUS.SEARCHING_DRIVER) return;
 
-  // Find all online drivers — NO city filter so no mismatch kills the search
-  const onlineDrivers = await Driver.find({
-    currentStatus: DRIVER_STATUS.ONLINE,
-  })
-    .limit(50)
-    .lean();
+  // Find online drivers
+  const onlineDrivers = await Driver.find({ currentStatus: DRIVER_STATUS.ONLINE }).limit(50).lean();
 
-  if (!onlineDrivers.length) {
+  // For shared rides also include BUSY drivers already on a shared trip who could pick up a second passenger
+  let eligibleDrivers = [...onlineDrivers];
+  if (ride.rideType === "shared") {
+    const busyDriverIds = await Ride.distinct("driverId", {
+      rideType: "shared",
+      status: { $in: [RIDE_STATUS.DRIVER_ASSIGNED, RIDE_STATUS.DRIVER_ARRIVING] },
+    });
+    if (busyDriverIds.length) {
+      const busySharedDrivers = await Driver.find({
+        _id: { $in: busyDriverIds },
+        currentStatus: DRIVER_STATUS.BUSY,
+      }).limit(20).lean();
+      eligibleDrivers = [...onlineDrivers, ...busySharedDrivers];
+    }
+  }
+
+  if (!eligibleDrivers.length) {
     ride.status = RIDE_STATUS.NO_DRIVER_AVAILABLE;
     ride.statusVersion += 1;
     ride.statusTimeline.push({
@@ -33,7 +45,7 @@ async function broadcastRideOffer(rideId, logger) {
   }
 
   // Sort by distance to pickup — closest first
-  const sorted = onlineDrivers
+  const sorted = eligibleDrivers
     .map((d) => ({
       driver: d,
       distance: distanceInKm(

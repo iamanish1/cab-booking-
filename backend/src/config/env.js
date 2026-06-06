@@ -22,7 +22,7 @@ const env = {
   jwtRefreshTtl: process.env.JWT_REFRESH_TTL || "30d",
   otpTtlSeconds: Number(process.env.OTP_TTL_SECONDS || 300),
   otpResendCooldownSeconds: Number(process.env.OTP_RESEND_COOLDOWN_SECONDS || 60),
-  defaultCity: process.env.DEFAULT_CITY || "Delhi",
+  defaultCity: process.env.DEFAULT_CITY || "Jammu",
   customerCashbackTarget: Number(process.env.CUSTOMER_CASHBACK_TARGET || 10),
   customerCashbackBonus: Number(process.env.CUSTOMER_CASHBACK_BONUS || 20),
   logLevel: process.env.LOG_LEVEL || "info",

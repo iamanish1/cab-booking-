@@ -8,22 +8,23 @@ async function ensureSeedDrivers() {
 
   await Driver.insertMany([
     {
-      fullName: "Aksh Tiwari",
+      fullName: "Rahul Sharma",
       mobile: "9990074614",
-      city: "Delhi",
-      vehicleNumber: "DL01AB2345",
+      city: "Jammu",
+      vehicleNumber: "JK01AB2345",
       vehicleCapacity: 4,
       currentStatus: DRIVER_STATUS.ONLINE,
-      currentLocation: { type: "Point", coordinates: [77.209, 28.6139] },
+      // Jammu city center coordinates [lng, lat]
+      currentLocation: { type: "Point", coordinates: [74.8570, 32.7266] },
     },
     {
-      fullName: "Priya Sharma",
+      fullName: "Vikram Singh",
       mobile: "9990074615",
-      city: "Delhi",
-      vehicleNumber: "DL02CD4567",
+      city: "Jammu",
+      vehicleNumber: "JK02CD4567",
       vehicleCapacity: 4,
       currentStatus: DRIVER_STATUS.ONLINE,
-      currentLocation: { type: "Point", coordinates: [77.201, 28.61] },
+      currentLocation: { type: "Point", coordinates: [74.8527, 32.7185] },
     },
   ]);
 }

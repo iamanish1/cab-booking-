@@ -10,7 +10,7 @@ async function getAppBootstrap(customerId) {
     getWalletSummary(customerId),
   ]);
 
-  const city = customer?.city || "Delhi";
+  const city = customer?.city || "Jammu";
 
   return {
     profile: customer,
@@ -18,7 +18,7 @@ async function getAppBootstrap(customerId) {
     activeRide,
     homeMetadata: {
       city,
-      popularLocations: POPULAR_LOCATIONS[city] || POPULAR_LOCATIONS.Delhi,
+      popularLocations: POPULAR_LOCATIONS[city] || POPULAR_LOCATIONS.Jammu,
       rideTypes: [
         {
           key: RIDE_TYPE.SHARED,

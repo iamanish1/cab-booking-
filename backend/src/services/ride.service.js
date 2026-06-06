@@ -18,8 +18,10 @@ const {
 const { emitRideLifecycle, emitToDriver } = require("./socket.service");
 
 function computeFareBreakdown({ distanceKm, rideType }) {
-  const baseFare = rideType === RIDE_TYPE.SHARED ? 30 : 100;
-  const distanceComponent = Math.round(distanceKm * (rideType === RIDE_TYPE.SHARED ? 5 : 12));
+  // Jammu pricing: Personal ₹10/km, Shared ₹12/km, no base fare
+  const baseFare = 0;
+  const ratePerKm = rideType === RIDE_TYPE.SHARED ? 12 : 10;
+  const distanceComponent = Math.round(distanceKm * ratePerKm);
   const surge = 0;
   const fare = baseFare + distanceComponent + surge;
 
@@ -135,7 +137,7 @@ async function createRide({ customerId, payload }) {
     ],
     otpHash: await hashValue(rideOtp),
     otpCode: rideOtp,
-    city: payload.city || "Delhi",
+    city: payload.city || "Jammu",
   });
 
   await recordTripEvent(ride._id, "customer", TRIP_EVENT.CREATED, {

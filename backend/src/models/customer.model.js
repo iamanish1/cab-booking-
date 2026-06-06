@@ -13,6 +13,7 @@ const customerSchema = new mongoose.Schema(
       default: CUSTOMER_STATUS.ACTIVE,
     },
     lastLoginAt: { type: Date, default: null },
+    expoPushToken: { type: String, default: null },
   },
   { timestamps: true }
 );

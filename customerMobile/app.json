@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "EasyRidess",
+    "name": "EasyRides",
     "slug": "easyridess-customer",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -14,11 +14,11 @@
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "in.easyridess.customer"
+      "bundleIdentifier": "in.easyrides.customer"
     },
     "android": {
-      "package": "in.easyridess.customer",
-      "versionCode": 5,
+      "package": "in.easyrides.customer",
+      "versionCode": 3,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#000000"
@@ -38,7 +38,7 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "Allow EasyRidess to access your location to show nearby drivers and auto-fill your pickup."
+          "locationWhenInUsePermission": "Allow EasyRides to access your location to show nearby drivers and auto-fill your pickup."
         }
       ]
     ],

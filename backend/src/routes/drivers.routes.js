@@ -5,6 +5,7 @@ const { emitRideLifecycle, SOCKET_EVENT } = require("../services/socket.service"
 const { Customer } = require("../models/customer.model");
 const { Driver } = require("../models/driver.model");
 const { Ride } = require("../models/ride.model");
+const { sendExpoPushNotification } = require("../services/notification.service");
 const { updateDriverLocation, updateDriverStatus } = require("../services/driver.service");
 const {
   cancelRide,
@@ -78,6 +79,17 @@ function createDriversRouter() {
         rideId: ride._id,
         amount: ride.finalFare,
       });
+
+      // Push notification to customer (best-effort)
+      const customer = await Customer.findById(ride.customerId).select("expoPushToken").lean();
+      if (customer?.expoPushToken) {
+        sendExpoPushNotification([customer.expoPushToken], {
+          title: "Trip Completed",
+          body: `Your ride is complete. Fare: ₹${ride.finalFare}. Rate your driver!`,
+          data: { rideId: String(ride._id), event: "COMPLETED" },
+        }).catch(() => {});
+      }
+
       ok(res, ride);
     })
   );
@@ -112,6 +124,44 @@ function createDriversRouter() {
       }
 
       ok(res, activeRide || null);
+    })
+  );
+
+  router.get(
+    "/:driverId/earnings",
+    asyncHandler(async (req, res) => {
+      const { WalletTransaction } = require("../models/wallet-transaction.model");
+      const driver = await Driver.findById(req.params.driverId).select("fullName mobile").lean();
+      if (!driver) throw new (require("../lib/errors").AppError)("Driver not found", 404);
+
+      const completedRides = await Ride.find({
+        driverId: req.params.driverId,
+        status: "COMPLETED",
+      }).select("finalFare quotedFare completedAt rideType").sort({ completedAt: -1 }).lean();
+
+      const totalEarnings = completedRides.reduce((sum, r) => sum + (r.finalFare || r.quotedFare || 0), 0);
+      const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+      const todayRides = completedRides.filter((r) => r.completedAt && new Date(r.completedAt) >= todayStart);
+      const todayEarnings = todayRides.reduce((sum, r) => sum + (r.finalFare || r.quotedFare || 0), 0);
+
+      ok(res, {
+        totalEarnings,
+        totalRides: completedRides.length,
+        todayEarnings,
+        todayRides: todayRides.length,
+        recentRides: completedRides.slice(0, 10),
+      });
+    })
+  );
+
+  router.post(
+    "/:driverId/push-token",
+    asyncHandler(async (req, res) => {
+      const { token } = req.body;
+      if (token) {
+        await Driver.findByIdAndUpdate(req.params.driverId, { expoPushToken: token });
+      }
+      ok(res, { registered: true });
     })
   );
 

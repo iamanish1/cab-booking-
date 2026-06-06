@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "EasyRidess Driver",
-    "slug": "easyridess-driver",
+    "name": "EasyDrivers",
+    "slug": "easydrivers",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -14,11 +14,11 @@
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "in.easyridess.driver"
+      "bundleIdentifier": "in.easydrivers.app"
     },
     "android": {
-      "package": "in.easyridess.driver",
-      "versionCode": 2,
+      "package": "in.easydrivers.app",
+      "versionCode": 1,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#000000"
@@ -40,8 +40,8 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "Allow EasyRidess Driver to access your location to share it with passengers during the ride.",
-          "locationAlwaysAndWhenInUsePermission": "Allow EasyRidess Driver to access your location in the background to track the ride."
+          "locationWhenInUsePermission": "Allow EasyDrivers to access your location to share it with passengers during the ride.",
+          "locationAlwaysAndWhenInUsePermission": "Allow EasyDrivers to access your location in the background to track the ride."
         }
       ]
     ],
@@ -49,6 +49,7 @@
       "eas": {
         "projectId": "e3531342-26c8-4ae9-b657-b4a484544942"
       }
-    }
+    },
+    "owner": "iamanish"
   }
 }

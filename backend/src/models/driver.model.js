@@ -15,6 +15,7 @@ const driverSchema = new mongoose.Schema(
       default: DRIVER_STATUS.OFFLINE,
       index: true,
     },
+    expoPushToken: { type: String, default: null },
     currentLocation: {
       type: {
         type: String,

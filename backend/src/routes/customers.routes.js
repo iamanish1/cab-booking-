@@ -41,6 +41,17 @@ function createCustomersRouter() {
     })
   );
 
+  router.post(
+    "/me/push-token",
+    asyncHandler(async (req, res) => {
+      const { token } = req.body;
+      if (token) {
+        await Customer.findByIdAndUpdate(req.auth.sub, { expoPushToken: token });
+      }
+      ok(res, { registered: true });
+    })
+  );
+
   return router;
 }
 

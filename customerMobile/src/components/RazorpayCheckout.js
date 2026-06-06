@@ -26,7 +26,7 @@ function getCheckoutHTML({ keyId, orderId, amount, currency, prefillName, prefil
       amount: ${amount},
       currency: '${currency}',
       order_id: '${orderId}',
-      name: 'EasyRidess',
+      name: 'EasyRides',
       description: 'Cab Booking Payment',
       prefill: {
         name: '${prefillName}',
