@@ -24,7 +24,12 @@ function createAccessToken(payload) {
 }
 
 function createRefreshToken(payload) {
-  return jwt.sign(payload, env.jwtRefreshSecret, { expiresIn: env.jwtRefreshTtl });
+  // jti ensures uniqueness even when two tokens are created within the same clock-second
+  return jwt.sign(
+    { ...payload, jti: crypto.randomUUID() },
+    env.jwtRefreshSecret,
+    { expiresIn: env.jwtRefreshTtl }
+  );
 }
 
 function verifyAccessToken(token) {

@@ -1,18 +1,25 @@
 import * as Notifications from "expo-notifications";
+import Constants, { ExecutionEnvironment } from "expo-constants";
 import { apiRequest } from "./api";
 import { getSession } from "./session";
 
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
-});
+// Push token APIs were removed from Expo Go in SDK 53; only available in dev/production builds.
+const isExpoGo = Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
+
+if (!isExpoGo) {
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowAlert: true,
+      shouldPlaySound: true,
+      shouldSetBadge: false,
+      shouldShowBanner: true,
+      shouldShowList: true,
+    }),
+  });
+}
 
 export async function registerPushToken(): Promise<void> {
+  if (isExpoGo) return;
   try {
     const perms = await Notifications.getPermissionsAsync();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -43,6 +50,7 @@ export async function registerPushToken(): Promise<void> {
 export function addNotificationListener(
   onReceived: (notification: Notifications.Notification) => void
 ): () => void {
+  if (isExpoGo) return () => {};
   const sub = Notifications.addNotificationReceivedListener(onReceived);
   return () => sub.remove();
 }
@@ -50,6 +58,7 @@ export function addNotificationListener(
 export function addNotificationResponseListener(
   onResponse: (response: Notifications.NotificationResponse) => void
 ): () => void {
+  if (isExpoGo) return () => {};
   const sub = Notifications.addNotificationResponseReceivedListener(onResponse);
   return () => sub.remove();
 }
